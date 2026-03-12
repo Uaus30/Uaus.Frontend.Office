@@ -1,0 +1,19 @@
+packages:
+  "recharts": "Beautiful charting library for the dashboard metrics"
+  "date-fns": "For date formatting in Portuguese"
+  "framer-motion": "For page transitions and modal animations"
+  "@hookform/resolvers": "Zod integration for React Hook Form"
+  "react-hook-form": "Form state management"
+  "zod": "Type-safe schema validation for forms"
+
+images:
+  - path: "artifacts/gestao/public/images/login-bg.png"
+    description: "Abstract sleek dark mode professional background with subtle indigo and violet gradients, geometric glassmorphism, enterprise feel"
+    aspect_ratio: "16:9"
+  - path: "artifacts/gestao/public/images/logo-icon.png"
+    description: "Minimal geometric logo icon mark in bright indigo on transparent background, sleek, modern"
+    aspect_ratio: "1:1"
+
+notes:
+  - Using api-client-react hooks for all data fetching as specified.
+  - Relying on pre-existing shadcn ui components from the workspace.
