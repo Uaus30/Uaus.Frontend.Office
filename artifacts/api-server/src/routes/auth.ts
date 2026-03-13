@@ -30,7 +30,14 @@ router.post("/login", async (req, res) => {
     }
     (req as any).session = { userId: user.id };
     (req as any).sessionData = { userId: user.id };
-    res.cookie("session_user_id", String(user.id), { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
+    const isProduction = process.env.NODE_ENV === "production";
+    res.cookie("session_user_id", String(user.id), {
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: "/",
+      sameSite: isProduction ? "none" : "lax",
+      secure: isProduction,
+    });
     res.json({
       user: {
         id: user.id,
@@ -49,7 +56,12 @@ router.post("/login", async (req, res) => {
 });
 
 router.post("/logout", (_req, res) => {
-  res.clearCookie("session_user_id");
+  const isProduction = process.env.NODE_ENV === "production";
+  res.clearCookie("session_user_id", {
+    path: "/",
+    sameSite: isProduction ? "none" : "lax",
+    secure: isProduction,
+  });
   res.json({ message: "Logout realizado com sucesso" });
 });
 
