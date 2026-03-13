@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 
 export default function Login() {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -31,12 +31,11 @@ export default function Login() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    login({ data: { email, password } });
+    login({ data: { email: identifier, password } });
   };
 
   return (
     <div className="min-h-screen w-full flex bg-background text-foreground relative overflow-hidden">
-      {/* Background Image & Overlay */}
       <div className="absolute inset-0 z-0">
         <img 
           src={`${import.meta.env.BASE_URL}images/login-bg.png`} 
@@ -55,31 +54,35 @@ export default function Login() {
           className="glass-panel p-8 md:p-12 rounded-3xl"
         >
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center border border-primary/30 shadow-inner">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center">
               <img 
                 src={`${import.meta.env.BASE_URL}images/logo-icon.png`} 
-                alt="GestãoPro" 
-                className="w-6 h-6 object-contain"
+                alt="Uaus" 
+                className="w-12 h-12 object-contain"
               />
             </div>
-            <h1 className="text-2xl font-display font-bold text-gradient">GestãoPro</h1>
+            <div>
+              <h1 className="text-xl font-display font-bold leading-tight">Painel Administrativo</h1>
+              <p className="text-xs text-muted-foreground">uaus.com.br</p>
+            </div>
           </div>
 
           <h2 className="text-3xl font-display font-bold mb-2">Bem-vindo de volta</h2>
           <p className="text-muted-foreground mb-8 text-sm">
-            Insira suas credenciais para acessar o painel administrativo.
+            Insira suas credenciais para acessar o painel.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="identifier">Email ou usuário</Label>
               <Input 
-                id="email" 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="nome@empresa.com" 
+                id="identifier" 
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="admin ou admin@uaus.com.br" 
                 className="h-12 bg-background/50 border-white/10 focus-visible:ring-primary/50"
+                autoComplete="username"
                 required
               />
             </div>
@@ -95,6 +98,7 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••" 
                 className="h-12 bg-background/50 border-white/10 focus-visible:ring-primary/50"
+                autoComplete="current-password"
                 required
               />
             </div>
@@ -111,6 +115,10 @@ export default function Login() {
               )}
             </Button>
           </form>
+
+          <p className="mt-8 text-center text-xs text-muted-foreground">
+            © {new Date().getFullYear()} Uaus — uaus.com.br
+          </p>
         </motion.div>
       </div>
     </div>

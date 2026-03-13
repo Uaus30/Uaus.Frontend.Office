@@ -3,23 +3,57 @@ import { useGetDashboardMetrics, useGetSalesChart, useGetTopProducts, useGetSale
 import { AppLayout } from "@/components/layout";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatCurrency } from "@/lib/formatters";
-import { DollarSign, ShoppingCart, TrendingUp, PackageSearch, ArrowUpRight, ArrowDownRight, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { formatCurrency, formatShortDate } from "@/lib/formatters";
+import { DollarSign, ShoppingCart, TrendingUp, PackageSearch, ArrowUpRight, ArrowDownRight, Loader2, CalendarRange } from "lucide-react";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
 } from "recharts";
 import { motion } from "framer-motion";
 
-export default function Dashboard() {
-  const [period, setPeriod] = useState<"7d" | "30d" | "90d" | "1y">("30d");
+type PeriodPreset = "7d" | "30d" | "90d" | "1y";
+type PeriodMode = "preset" | "custom";
 
-  const { data: metrics, isLoading: loadingMetrics } = useGetDashboardMetrics({ period });
-  const { data: chartData, isLoading: loadingChart } = useGetSalesChart({ period });
+export default function Dashboard() {
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("preset");
+  const [period, setPeriod] = useState<PeriodPreset>("30d");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [appliedCustomStart, setAppliedCustomStart] = useState("");
+  const [appliedCustomEnd, setAppliedCustomEnd] = useState("");
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
+  const metricsParams = periodMode === "preset"
+    ? { period }
+    : { period: "30d" as PeriodPreset };
+
+  const { data: metrics, isLoading: loadingMetrics } = useGetDashboardMetrics(metricsParams);
+  const { data: chartData, isLoading: loadingChart } = useGetSalesChart(metricsParams);
   const { data: topProducts, isLoading: loadingTopProducts } = useGetTopProducts();
   const { data: categoryData, isLoading: loadingCategories } = useGetSalesByCategory();
 
   const PIE_COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))'];
+
+  const periodLabel = periodMode === "custom" && appliedCustomStart && appliedCustomEnd
+    ? `${appliedCustomStart} → ${appliedCustomEnd}`
+    : { "7d": "Últimos 7 dias", "30d": "Últimos 30 dias", "90d": "Últimos 90 dias", "1y": "Último ano" }[period];
+
+  const handleApplyCustom = () => {
+    if (!customStart || !customEnd) return;
+    setAppliedCustomStart(customStart);
+    setAppliedCustomEnd(customEnd);
+    setPeriodMode("custom");
+    setPopoverOpen(false);
+  };
+
+  const handleSelectPreset = (v: string) => {
+    setPeriod(v as PeriodPreset);
+    setPeriodMode("preset");
+  };
 
   return (
     <AppLayout>
@@ -29,10 +63,12 @@ export default function Dashboard() {
             <h1 className="text-3xl font-display font-bold">Visão Geral</h1>
             <p className="text-muted-foreground mt-1">Acompanhe os principais indicadores da sua empresa.</p>
           </div>
-          <div className="w-48">
-            <Select value={period} onValueChange={(v: any) => setPeriod(v)}>
-              <SelectTrigger className="h-10 bg-card">
-                <SelectValue placeholder="Selecione o período" />
+
+          {/* Period selector */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <Select value={periodMode === "preset" ? period : ""} onValueChange={handleSelectPreset}>
+              <SelectTrigger className="h-10 bg-card w-44">
+                <SelectValue placeholder={periodMode === "custom" ? "Período personalizado" : "Selecione"} />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="7d">Últimos 7 dias</SelectItem>
@@ -41,8 +77,65 @@ export default function Dashboard() {
                 <SelectItem value="1y">Último ano</SelectItem>
               </SelectContent>
             </Select>
+
+            <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant={periodMode === "custom" ? "default" : "outline"}
+                  size="sm"
+                  className="h-10 gap-2 text-sm"
+                >
+                  <CalendarRange className="w-4 h-4" />
+                  {periodMode === "custom" && appliedCustomStart
+                    ? `${appliedCustomStart} → ${appliedCustomEnd}`
+                    : "Período personalizado"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-4 bg-card border-border" align="end">
+                <p className="text-sm font-semibold mb-3">Selecionar período</p>
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Data inicial</Label>
+                    <Input
+                      type="date"
+                      value={customStart}
+                      onChange={e => setCustomStart(e.target.value)}
+                      className="h-9 bg-background border-input text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Data final</Label>
+                    <Input
+                      type="date"
+                      value={customEnd}
+                      onChange={e => setCustomEnd(e.target.value)}
+                      max={new Date().toISOString().split("T")[0]}
+                      className="h-9 bg-background border-input text-sm"
+                    />
+                  </div>
+                  <Button
+                    className="w-full h-9"
+                    onClick={handleApplyCustom}
+                    disabled={!customStart || !customEnd || customStart > customEnd}
+                  >
+                    Aplicar período
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
+
+        {/* Period label */}
+        {periodMode === "custom" && appliedCustomStart && (
+          <div className="flex items-center gap-2 -mt-4">
+            <span className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-full flex items-center gap-1.5">
+              <CalendarRange className="w-3 h-3" />
+              Exibindo: {appliedCustomStart} até {appliedCustomEnd}
+            </span>
+            <button onClick={() => setPeriodMode("preset")} className="text-xs text-primary hover:underline">Limpar</button>
+          </div>
+        )}
 
         {/* METRICS CARDS */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -212,9 +305,9 @@ function MetricCard({ title, value, growth, icon: Icon, loading }: any) {
           <div className="flex items-center gap-1 mt-2">
             {isPositive ? <ArrowUpRight className="w-4 h-4 text-emerald-500" /> : <ArrowDownRight className="w-4 h-4 text-destructive" />}
             <span className={`text-sm font-medium ${isPositive ? 'text-emerald-500' : 'text-destructive'}`}>
-              {Math.abs(growth)}%
+              {Math.abs(growth).toFixed(1)}%
             </span>
-            <span className="text-xs text-muted-foreground ml-1">vs mês anterior</span>
+            <span className="text-xs text-muted-foreground ml-1">vs período anterior</span>
           </div>
         </div>
       )}
