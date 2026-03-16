@@ -87,13 +87,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <Sidebar className="border-r border-border/50 bg-card">
           <SidebarHeader className="p-6">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-                <img 
-                  src={`${import.meta.env.BASE_URL}images/logo-icon.png`} 
-                  alt="Uaus" 
-                  className="w-8 h-8 object-contain"
-                />
-              </div>
+              <img 
+                src={`${import.meta.env.BASE_URL}images/logo-icon.png`} 
+                alt="Uaus" 
+                className="w-8 h-8 object-contain"
+              />
               <div>
                 <h1 className="text-sm font-display font-bold leading-tight">Painel Administrativo</h1>
                 <p className="text-xs text-muted-foreground">uaus.com.br</p>
