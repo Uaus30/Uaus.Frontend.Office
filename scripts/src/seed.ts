@@ -14,9 +14,7 @@ async function seed() {
 
   // Users
   const users = await db.insert(usersTable).values([
-    { name: "Admin GestãoPro", email: "admin@gestao.pro", passwordHash: hashPassword("admin123"), role: "admin", active: true },
-    { name: "Maria Gerente", email: "maria@gestao.pro", passwordHash: hashPassword("maria123"), role: "manager", active: true },
-    { name: "João Vendedor", email: "joao@gestao.pro", passwordHash: hashPassword("joao123"), role: "seller", active: true },
+    { name: "Administrador Uaus", username: "admin", email: "admin@uaus.com.br", passwordHash: hashPassword("admin123"), role: "admin", active: true },
   ]).onConflictDoNothing().returning();
   console.log("Users seeded:", users.length);
 

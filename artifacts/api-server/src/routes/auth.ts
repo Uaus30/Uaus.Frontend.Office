@@ -18,10 +18,13 @@ router.post("/login", async (req, res) => {
       return;
     }
     const hash = hashPassword(password);
-    const users = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
+    const isEmail = email.includes("@");
+    const users = isEmail
+      ? await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1)
+      : await db.select().from(usersTable).where(eq(usersTable.username, email)).limit(1);
     const user = users[0];
     if (!user || user.passwordHash !== hash) {
-      res.status(401).json({ error: "Email ou senha inválidos" });
+      res.status(401).json({ error: "Email/usuário ou senha inválidos" });
       return;
     }
     if (!user.active) {
