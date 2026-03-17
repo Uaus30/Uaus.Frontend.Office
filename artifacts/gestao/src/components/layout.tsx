@@ -22,7 +22,8 @@ import {
   Users, 
   UserCog, 
   LogOut,
-  Loader2
+  Loader2,
+  ImageIcon
 } from "lucide-react";
 import { useGetMe, useLogout } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -33,6 +34,7 @@ const navigation = [
   { name: "Produtos", href: "/produtos", icon: Package },
   { name: "Categorias", href: "/categorias", icon: Folder },
   { name: "Etiquetas", href: "/etiquetas", icon: Tags },
+  { name: "Imagens", href: "/imagens", icon: ImageIcon },
   { name: "Vendas", href: "/vendas", icon: ShoppingCart },
   { name: "Clientes", href: "/clientes", icon: Users },
   { name: "Usuários", href: "/usuarios", icon: UserCog },

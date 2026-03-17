@@ -1,19 +1,47 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { tagsTable, productTagsTable, productsTable, saleItemsTable, salesTable } from "@workspace/db/schema";
-import { eq, sql, inArray } from "drizzle-orm";
+import { tagsTable, productTagsTable, productsTable, saleItemsTable } from "@workspace/db/schema";
+import { eq, sql, inArray, ilike, desc, asc } from "drizzle-orm";
 
 const router: IRouter = Router();
 
-router.get("/", async (_req, res) => {
+router.get("/", async (req, res) => {
   try {
-    const tags = await db.select().from(tagsTable).orderBy(tagsTable.name);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = [20, 50, 100].includes(Number(req.query.limit)) ? Number(req.query.limit) : 20;
+    const offset = (page - 1) * limit;
+    const search = req.query.search as string | undefined;
+    const sortBy = (req.query.sortBy as string) || "createdAt";
+    const sortDir = req.query.sortDir === "asc" ? "asc" : "desc";
+
+    let baseQuery = db.select().from(tagsTable);
+    if (search) {
+      baseQuery = baseQuery.where(ilike(tagsTable.name, `%${search}%`)) as any;
+    }
+
+    const allTags = await baseQuery;
+
     const productCounts = await db
       .select({ tagId: productTagsTable.tagId, count: sql<number>`count(*)`.mapWith(Number) })
       .from(productTagsTable)
       .groupBy(productTagsTable.tagId);
     const countMap = new Map(productCounts.map(p => [p.tagId, p.count]));
-    res.json(tags.map(t => ({ ...t, productCount: countMap.get(t.id) ?? 0 })));
+
+    let tagged = allTags.map(t => ({ ...t, productCount: countMap.get(t.id) ?? 0 }));
+
+    tagged.sort((a, b) => {
+      let av: any, bv: any;
+      if (sortBy === "name") { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
+      else if (sortBy === "productCount") { av = a.productCount; bv = b.productCount; }
+      else { av = new Date(a.createdAt).getTime(); bv = new Date(b.createdAt).getTime(); }
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    const total = tagged.length;
+    const data = tagged.slice(offset, offset + limit);
+    res.json({ data, total, page, limit });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erro interno" });
@@ -85,9 +113,7 @@ router.get("/:id/report", async (req, res) => {
 
     const statsMap = new Map(saleStats.map(s => [s.productId, s]));
     const productStats = products.map(p => ({
-      id: p.id,
-      name: p.name,
-      stock: p.stock,
+      id: p.id, name: p.name, stock: p.stock,
       totalSales: statsMap.get(p.id)?.totalSales ?? 0,
       totalRevenue: statsMap.get(p.id)?.totalRevenue ?? 0,
     }));

@@ -8,6 +8,8 @@ import tagsRouter from "./tags";
 import salesRouter from "./sales";
 import customersRouter from "./customers";
 import usersRouter from "./users";
+import imagesRouter from "./images";
+import storageRouter from "./storage";
 
 const router: IRouter = Router();
 
@@ -20,5 +22,7 @@ router.use("/tags", tagsRouter);
 router.use("/sales", salesRouter);
 router.use("/customers", customersRouter);
 router.use("/users", usersRouter);
+router.use("/images", imagesRouter);
+router.use(storageRouter);
 
 export default router;

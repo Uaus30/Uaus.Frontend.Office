@@ -11,6 +11,7 @@ import Tags from "@/pages/tags";
 import Sales from "@/pages/sales";
 import Customers from "@/pages/customers";
 import Users from "@/pages/users";
+import Images from "@/pages/images";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,6 +34,7 @@ function Router() {
       <Route path="/vendas" component={Sales} />
       <Route path="/clientes" component={Customers} />
       <Route path="/usuarios" component={Users} />
+      <Route path="/imagens" component={Images} />
       <Route component={NotFound} />
     </Switch>
   );

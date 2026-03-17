@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { productsTable, categoriesTable, productTagsTable, tagsTable } from "@workspace/db/schema";
-import { eq, like, and, sql, inArray } from "drizzle-orm";
+import { productsTable, categoriesTable, productTagsTable, tagsTable, productImagesTable, imagesTable } from "@workspace/db/schema";
+import { eq, like, and, sql, inArray, asc } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -28,19 +28,30 @@ async function getProductWithRelations(id: number) {
     tags = rawTags.map(t => ({ ...t, productCount: countMap.get(t.id) ?? 0 }));
   }
 
+  const imageLinks = await db
+    .select({ pi: productImagesTable, img: imagesTable })
+    .from(productImagesTable)
+    .innerJoin(imagesTable, eq(productImagesTable.imageId, imagesTable.id))
+    .where(eq(productImagesTable.productId, id))
+    .orderBy(asc(productImagesTable.displayOrder));
+  const images = imageLinks.map(({ pi, img }) => ({
+    id: img.id, name: img.name, type: img.type,
+    objectPath: img.objectPath, url: `/api/storage${img.objectPath}`,
+    displayOrder: pi.displayOrder, linkId: pi.id,
+  }));
+
   return {
     ...product,
     price: Number(product.price),
     costPrice: Number(product.costPrice),
-    category,
-    tags,
+    category, tags, images,
   };
 }
 
 router.get("/", async (req, res) => {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = [20, 50, 100].includes(Number(req.query.limit)) ? Number(req.query.limit) : 20;
     const search = req.query.search as string | undefined;
     const categoryId = req.query.categoryId ? Number(req.query.categoryId) : undefined;
     const tagId = req.query.tagId ? Number(req.query.tagId) : undefined;
@@ -50,10 +61,7 @@ router.get("/", async (req, res) => {
     if (tagId) {
       const links = await db.select({ productId: productTagsTable.productId }).from(productTagsTable).where(eq(productTagsTable.tagId, tagId));
       productIds = links.map(l => l.productId);
-      if (productIds.length === 0) {
-        res.json({ data: [], total: 0, page, limit });
-        return;
-      }
+      if (productIds.length === 0) { res.json({ data: [], total: 0, page, limit }); return; }
     }
 
     const conditions: any[] = [];
@@ -62,7 +70,6 @@ router.get("/", async (req, res) => {
     if (productIds) conditions.push(inArray(productsTable.id, productIds));
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
     const [{ count }] = await db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(productsTable).where(whereClause);
     const rawProducts = await db.select().from(productsTable).where(whereClause).orderBy(productsTable.name).limit(limit).offset(offset);
 
@@ -77,21 +84,15 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const { name, description, price, costPrice, stock, categoryId, tagIds, active } = req.body;
-    if (!name || price == null || costPrice == null) {
-      res.status(400).json({ error: "Nome, preço e custo são obrigatórios" });
-      return;
-    }
+    if (!name || price == null || costPrice == null) { res.status(400).json({ error: "Nome, preço e custo são obrigatórios" }); return; }
     const [product] = await db.insert(productsTable).values({
       name, description, price: String(price), costPrice: String(costPrice),
       stock: stock ?? 0, categoryId: categoryId ?? null, active: active ?? true,
     }).returning();
-
-    if (tagIds && tagIds.length > 0) {
+    if (tagIds?.length > 0) {
       await db.insert(productTagsTable).values(tagIds.map((tid: number) => ({ productId: product.id, tagId: tid })));
     }
-
-    const full = await getProductWithRelations(product.id);
-    res.status(201).json(full);
+    res.status(201).json(await getProductWithRelations(product.id));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erro interno" });
@@ -100,8 +101,7 @@ router.post("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    const product = await getProductWithRelations(id);
+    const product = await getProductWithRelations(Number(req.params.id));
     if (!product) { res.status(404).json({ error: "Produto não encontrado" }); return; }
     res.json(product);
   } catch (err) {
@@ -115,7 +115,8 @@ router.put("/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { name, description, price, costPrice, stock, categoryId, tagIds, active } = req.body;
     const [product] = await db.update(productsTable).set({
-      name, description, price: price != null ? String(price) : undefined,
+      name, description,
+      price: price != null ? String(price) : undefined,
       costPrice: costPrice != null ? String(costPrice) : undefined,
       stock, categoryId: categoryId ?? null, active,
     }).where(eq(productsTable.id, id)).returning();
@@ -127,9 +128,7 @@ router.put("/:id", async (req, res) => {
         await db.insert(productTagsTable).values(tagIds.map((tid: number) => ({ productId: id, tagId: tid })));
       }
     }
-
-    const full = await getProductWithRelations(id);
-    res.json(full);
+    res.json(await getProductWithRelations(id));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erro interno" });
@@ -140,10 +139,71 @@ router.delete("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
     await db.delete(productTagsTable).where(eq(productTagsTable.productId, id));
+    await db.delete(productImagesTable).where(eq(productImagesTable.productId, id));
     await db.delete(productsTable).where(eq(productsTable.id, id));
     res.json({ message: "Produto removido com sucesso" });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.get("/:id/images", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const links = await db
+      .select({ pi: productImagesTable, img: imagesTable })
+      .from(productImagesTable)
+      .innerJoin(imagesTable, eq(productImagesTable.imageId, imagesTable.id))
+      .where(eq(productImagesTable.productId, id))
+      .orderBy(asc(productImagesTable.displayOrder));
+    res.json(links.map(({ pi, img }) => ({
+      id: img.id, name: img.name, type: img.type,
+      objectPath: img.objectPath, url: `/api/storage${img.objectPath}`,
+      displayOrder: pi.displayOrder, linkId: pi.id,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.post("/:id/images", async (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    const { imageId, displayOrder } = req.body;
+    const existing = await db.select().from(productImagesTable)
+      .where(and(eq(productImagesTable.productId, productId), eq(productImagesTable.imageId, imageId))).limit(1);
+    if (existing.length > 0) { res.status(409).json({ error: "Imagem já vinculada" }); return; }
+    const [link] = await db.insert(productImagesTable).values({ productId, imageId, displayOrder: displayOrder ?? 0 }).returning();
+    res.status(201).json(link);
+  } catch (err) {
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.put("/:id/images/reorder", async (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    const { order } = req.body as { order: { imageId: number; displayOrder: number }[] };
+    await Promise.all(order.map(({ imageId, displayOrder }) =>
+      db.update(productImagesTable).set({ displayOrder })
+        .where(and(eq(productImagesTable.productId, productId), eq(productImagesTable.imageId, imageId)))
+    ));
+    res.json({ message: "Ordem atualizada" });
+  } catch (err) {
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.delete("/:id/images/:imageId", async (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    const imageId = Number(req.params.imageId);
+    await db.delete(productImagesTable).where(
+      and(eq(productImagesTable.productId, productId), eq(productImagesTable.imageId, imageId))
+    );
+    res.json({ message: "Imagem desvinculada" });
+  } catch (err) {
     res.status(500).json({ error: "Erro interno" });
   }
 });
