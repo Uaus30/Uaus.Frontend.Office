@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import { AppLayout } from "@/components/layout";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/formatters";
-import { Plus, Search, Edit2, Trash2, Loader2, Tag as TagIcon, X, ArrowUp, ArrowDown, ImageIcon, Link2 } from "lucide-react";
+import { Plus, Search, Edit2, Trash2, Loader2, Tag as TagIcon, X, ImageIcon, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
@@ -15,6 +15,7 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const MAX_IMAGE_SIZE = 1024 * 1024;
 
 async function apiGet(path: string, params?: Record<string, any>) {
   const url = new URL(`${window.location.origin}${BASE}/api${path}`);
@@ -82,9 +83,7 @@ function TagCombobox({ tagIds, onChange, allTags, onCreateTag }: {
           onChange([...tagIds, newTag.id]);
           setInputValue("");
           setOpen(false);
-        } finally {
-          setCreating(false);
-        }
+        } finally { setCreating(false); }
       } else if (filtered.length > 0) {
         addTag(filtered[0].id);
       }
@@ -162,68 +161,130 @@ function TagCombobox({ tagIds, onChange, allTags, onCreateTag }: {
   );
 }
 
-function ImagePicker({ productId, currentImages, onClose, onRefresh }: {
-  productId: number;
-  currentImages: any[];
-  onClose: () => void;
-  onRefresh: () => void;
+function ProductImageSection({ images, onImagesChange, editingId, uploading, onUpload, onRemove, onReorder }: {
+  images: any[];
+  onImagesChange: (imgs: any[]) => void;
+  editingId: number | null;
+  uploading: boolean;
+  onUpload: (files: FileList) => void;
+  onRemove: (imageId: number) => void;
+  onReorder: (newOrder: any[]) => void;
 }) {
-  const { toast } = useToast();
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const currentIds = new Set(currentImages.map(i => i.id));
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  const { data } = useQuery({
-    queryKey: ["images-picker", search, typeFilter],
-    queryFn: () => apiGet("/images", { search: search || undefined, type: typeFilter !== "all" ? typeFilter : undefined, limit: 50 }),
-  });
+  const handleDragStart = (e: React.DragEvent, i: number) => {
+    setDragIndex(i);
+    e.dataTransfer.effectAllowed = "move";
+  };
 
-  const addImage = async (imageId: number) => {
-    const maxOrder = currentImages.reduce((m, i) => Math.max(m, i.displayOrder ?? 0), -1);
-    await apiMutate("POST", `/products/${productId}/images`, { imageId, displayOrder: maxOrder + 1 });
-    onRefresh();
-    toast({ title: "Imagem vinculada" });
+  const handleDragOver = (e: React.DragEvent, i: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIndex(i);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === targetIndex) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+    const newImgs = [...images];
+    const [item] = newImgs.splice(dragIndex, 1);
+    newImgs.splice(targetIndex, 0, item);
+    const ordered = newImgs.map((img, i) => ({ ...img, displayOrder: i }));
+    onReorder(ordered);
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDropZone = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files?.length) onUpload(e.dataTransfer.files);
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Buscar imagem..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-8 text-sm bg-background" />
-        </div>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-36 h-8 bg-background text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="banner">Banner</SelectItem>
-            <SelectItem value="institucional">Institucional</SelectItem>
-            <SelectItem value="produtos">Produtos</SelectItem>
-            <SelectItem value="carrossel">Carrossel</SelectItem>
-          </SelectContent>
-        </Select>
+    <div className="pt-2 space-y-3 border-t border-border/30">
+      <div className="flex items-center justify-between">
+        <label className="text-sm font-medium flex items-center gap-2">
+          <ImageIcon className="w-4 h-4" /> Imagens do Produto
+          <span className="text-xs text-muted-foreground font-normal">(arraste para reordenar · primeira = principal · máx. 1MB)</span>
+        </label>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+        >
+          {uploading ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : <Upload className="w-3 h-3 mr-1.5" />}
+          Adicionar
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={e => e.target.files && onUpload(e.target.files)}
+          onClick={e => { (e.target as HTMLInputElement).value = ""; }}
+        />
       </div>
-      <div className="grid grid-cols-3 gap-2 max-h-52 overflow-y-auto pr-1">
-        {data?.data?.map((img: any) => {
-          const linked = currentIds.has(img.id);
-          return (
-            <button
+
+      {images.length > 0 ? (
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+          {images.map((img, i) => (
+            <div
               key={img.id}
-              type="button"
-              onClick={() => !linked && addImage(img.id)}
-              disabled={linked}
-              className={`relative rounded-lg border overflow-hidden transition-all text-left ${linked ? "opacity-40 cursor-default border-border/30" : "border-border/50 hover:border-primary/60 hover:shadow-md"}`}
+              draggable
+              onDragStart={e => handleDragStart(e, i)}
+              onDragOver={e => handleDragOver(e, i)}
+              onDrop={e => handleDrop(e, i)}
+              onDragEnd={handleDragEnd}
+              className={`relative group cursor-grab active:cursor-grabbing transition-all duration-150 ${
+                dragIndex === i ? "opacity-30 scale-95" : ""
+              } ${dragOverIndex === i && dragIndex !== i ? "ring-2 ring-primary ring-offset-1 ring-offset-card rounded-lg" : ""}`}
             >
-              <div className="aspect-square bg-muted/30">
-                <img src={`${BASE}${img.url}`} alt={img.name} className="w-full h-full object-cover" onError={e => { (e.target as any).style.display = "none"; }} />
+              <div className={`aspect-square rounded-lg overflow-hidden border-2 transition-colors ${i === 0 ? "border-primary" : "border-border/30"}`}>
+                <img src={`${BASE}${img.url}`} alt={img.name} className="w-full h-full object-cover pointer-events-none select-none" />
               </div>
-              <p className="px-1.5 py-1 text-[10px] truncate">{img.name}</p>
-              {linked && <div className="absolute inset-0 flex items-center justify-center bg-background/30"><Badge className="text-[9px] bg-primary/80">Vinculada</Badge></div>}
-            </button>
-          );
-        })}
-        {!data?.data?.length && <p className="col-span-3 text-center py-6 text-xs text-muted-foreground">Nenhuma imagem encontrada.</p>}
-      </div>
+              {i === 0 && (
+                <span className="absolute top-1 left-1 text-[9px] font-bold bg-primary text-primary-foreground px-1 rounded pointer-events-none">
+                  Principal
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => onRemove(img.id)}
+                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-destructive/90 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-destructive"
+              >
+                <X className="w-3 h-3" />
+              </button>
+              <p className="text-[9px] text-muted-foreground truncate mt-0.5 px-0.5">{img.name}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div
+          className="border-2 border-dashed border-border/40 rounded-xl p-8 text-center cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-all"
+          onClick={() => fileRef.current?.click()}
+          onDragOver={e => e.preventDefault()}
+          onDrop={handleDropZone}
+        >
+          <ImageIcon className="w-8 h-8 mx-auto opacity-20 mb-2" />
+          <p className="text-xs text-muted-foreground">Clique ou arraste imagens aqui</p>
+          <p className="text-[11px] text-muted-foreground/60 mt-1">JPG, PNG, WebP — máximo 1MB por imagem</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -238,7 +299,7 @@ export default function Products() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [productImages, setProductImages] = useState<any[]>([]);
-  const [showPicker, setShowPicker] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const { data: productsData, isLoading } = useQuery({
     queryKey: ["products", { search, page, limit }],
@@ -257,16 +318,6 @@ export default function Products() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tags-all"] }),
   });
 
-  const createProduct = useMutation({
-    mutationFn: (data: any) => apiMutate("POST", "/products", data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); toast({ title: "Produto criado." }); handleCloseModal(); },
-  });
-
-  const updateProduct = useMutation({
-    mutationFn: ({ id, data }: any) => apiMutate("PUT", `/products/${id}`, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); toast({ title: "Produto atualizado." }); handleCloseModal(); },
-  });
-
   const deleteProduct = useMutation({
     mutationFn: (id: number) => apiMutate("DELETE", `/products/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); toast({ title: "Produto removido." }); },
@@ -276,6 +327,8 @@ export default function Products() {
     resolver: zodResolver(formSchema),
     defaultValues: { name: "", description: "", price: 0, costPrice: 0, stock: 0, tagIds: [], active: true, categoryId: null },
   });
+
+  const [saving, setSaving] = useState(false);
 
   const handleOpenModal = (product?: any) => {
     if (product) {
@@ -291,44 +344,107 @@ export default function Products() {
       form.reset({ name: "", description: "", price: 0, costPrice: 0, stock: 0, tagIds: [], active: true, categoryId: null });
       setProductImages([]);
     }
-    setShowPicker(false);
     setModalOpen(true);
   };
 
-  const handleCloseModal = () => { setModalOpen(false); form.reset(); setProductImages([]); setShowPicker(false); };
-
-  const refreshImages = async () => {
-    if (!editingId) return;
-    const imgs = await apiGet(`/products/${editingId}/images`);
-    setProductImages(imgs);
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    form.reset();
+    setProductImages([]);
+    setEditingId(null);
   };
 
-  const moveImage = async (index: number, dir: -1 | 1) => {
-    const newImgs = [...productImages];
-    const swapIdx = index + dir;
-    if (swapIdx < 0 || swapIdx >= newImgs.length) return;
-    [newImgs[index], newImgs[swapIdx]] = [newImgs[swapIdx], newImgs[index]];
-    const ordered = newImgs.map((img, i) => ({ ...img, displayOrder: i }));
+  const uploadImages = useCallback(async (files: FileList) => {
+    const fileArr = Array.from(files);
+    for (const file of fileArr) {
+      if (file.size > MAX_IMAGE_SIZE) {
+        toast({ title: `"${file.name}" excede 1MB`, description: "Selecione uma imagem menor.", variant: "destructive" });
+        continue;
+      }
+      setUploadingImage(true);
+      try {
+        const { uploadURL, objectPath } = await apiMutate("POST", "/images/upload-url", {
+          name: file.name, size: file.size, contentType: file.type,
+        });
+        await fetch(uploadURL, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+        const imgRecord = await apiMutate("POST", "/images", {
+          name: file.name.replace(/\.[^/.]+$/, ""),
+          type: "produtos",
+          objectPath,
+        });
+        const newImg = { ...imgRecord, url: `/api/storage${imgRecord.objectPath}` };
+
+        if (editingId) {
+          setProductImages(prev => {
+            const order = prev.length;
+            apiMutate("POST", `/products/${editingId}/images`, { imageId: imgRecord.id, displayOrder: order });
+            return [...prev, { ...newImg, displayOrder: order }];
+          });
+        } else {
+          setProductImages(prev => [...prev, { ...newImg, displayOrder: prev.length }]);
+        }
+      } catch (err: any) {
+        toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
+      } finally {
+        setUploadingImage(false);
+      }
+    }
+  }, [editingId, toast]);
+
+  const removeImage = useCallback(async (imageId: number) => {
+    if (editingId) {
+      try {
+        await apiMutate("DELETE", `/products/${editingId}/images/${imageId}`);
+      } catch (err: any) {
+        toast({ title: "Erro ao remover imagem", description: err.message, variant: "destructive" });
+        return;
+      }
+    } else {
+      try {
+        await apiMutate("DELETE", `/images/${imageId}`);
+      } catch {
+        /* ignore staged image soft-delete errors */
+      }
+    }
+    setProductImages(prev => prev.filter(i => i.id !== imageId));
+  }, [editingId, toast]);
+
+  const reorderImages = useCallback(async (ordered: any[]) => {
     setProductImages(ordered);
     if (editingId) {
-      await apiMutate("PUT", `/products/${editingId}/images/reorder`, {
-        order: ordered.map(img => ({ imageId: img.id, displayOrder: img.displayOrder })),
-      });
+      try {
+        await apiMutate("PUT", `/products/${editingId}/images/reorder`, {
+          order: ordered.map(img => ({ imageId: img.id, displayOrder: img.displayOrder })),
+        });
+      } catch (err: any) {
+        toast({ title: "Erro ao reordenar", description: err.message, variant: "destructive" });
+      }
     }
-  };
+  }, [editingId, toast]);
 
-  const removeImage = async (imageId: number) => {
-    if (!editingId) {
-      setProductImages(prev => prev.filter(i => i.id !== imageId));
-      return;
+  const onSubmit = async (data: FormValues) => {
+    setSaving(true);
+    try {
+      if (editingId) {
+        await apiMutate("PUT", `/products/${editingId}`, data);
+        toast({ title: "Produto atualizado." });
+      } else {
+        const product = await apiMutate("POST", "/products", data);
+        for (let i = 0; i < productImages.length; i++) {
+          await apiMutate("POST", `/products/${product.id}/images`, {
+            imageId: productImages[i].id,
+            displayOrder: i,
+          });
+        }
+        toast({ title: "Produto criado." });
+      }
+      qc.invalidateQueries({ queryKey: ["products"] });
+      handleCloseModal();
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
     }
-    await apiMutate("DELETE", `/products/${editingId}/images/${imageId}`);
-    setProductImages(prev => prev.filter(i => i.id !== imageId));
-  };
-
-  const onSubmit = (data: FormValues) => {
-    if (editingId) updateProduct.mutate({ id: editingId, data });
-    else createProduct.mutate(data);
   };
 
   const totalPages = Math.max(1, Math.ceil((productsData?.total || 0) / limit));
@@ -531,57 +647,20 @@ export default function Products() {
               </div>
             </div>
 
-            {editingId && (
-              <div className="pt-2 space-y-3 border-t border-border/30">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium flex items-center gap-2">
-                    <ImageIcon className="w-4 h-4" /> Imagens do Produto
-                    <span className="text-xs text-muted-foreground font-normal">(primeira = principal)</span>
-                  </label>
-                  <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setShowPicker(v => !v)}>
-                    <Link2 className="w-3 h-3 mr-1.5" /> {showPicker ? "Fechar seletor" : "Adicionar imagem"}
-                  </Button>
-                </div>
-
-                {showPicker && (
-                  <div className="p-3 bg-background/50 border border-border/30 rounded-xl">
-                    <ImagePicker productId={editingId} currentImages={productImages} onClose={() => setShowPicker(false)} onRefresh={refreshImages} />
-                  </div>
-                )}
-
-                {productImages.length > 0 ? (
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                    {productImages.map((img, i) => (
-                      <div key={img.id} className="relative group">
-                        <div className={`aspect-square rounded-lg overflow-hidden border-2 ${i === 0 ? "border-primary" : "border-border/30"}`}>
-                          <img src={`${BASE}${img.url}`} alt={img.name} className="w-full h-full object-cover" />
-                        </div>
-                        {i === 0 && <span className="absolute top-1 left-1 text-[9px] font-bold bg-primary text-primary-foreground px-1 rounded">Principal</span>}
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1">
-                          <button type="button" onClick={() => moveImage(i, -1)} disabled={i === 0} className="p-1 rounded bg-white/20 hover:bg-white/30 disabled:opacity-30">
-                            <ArrowUp className="w-3 h-3" />
-                          </button>
-                          <button type="button" onClick={() => moveImage(i, 1)} disabled={i === productImages.length - 1} className="p-1 rounded bg-white/20 hover:bg-white/30 disabled:opacity-30">
-                            <ArrowDown className="w-3 h-3" />
-                          </button>
-                          <button type="button" onClick={() => removeImage(img.id)} className="p-1 rounded bg-destructive/60 hover:bg-destructive/80">
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                        <p className="text-[9px] text-muted-foreground truncate mt-0.5 px-0.5">{img.name}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground py-2">Nenhuma imagem vinculada. Use o botão acima para adicionar.</p>
-                )}
-              </div>
-            )}
+            <ProductImageSection
+              images={productImages}
+              onImagesChange={setProductImages}
+              editingId={editingId}
+              uploading={uploadingImage}
+              onUpload={uploadImages}
+              onRemove={removeImage}
+              onReorder={reorderImages}
+            />
 
             <DialogFooter className="pt-4">
               <Button type="button" variant="outline" onClick={handleCloseModal}>Cancelar</Button>
-              <Button type="submit" disabled={createProduct.isPending || updateProduct.isPending} className="bg-primary text-primary-foreground hover-elevate">
-                {(createProduct.isPending || updateProduct.isPending) ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar"}
+              <Button type="submit" disabled={saving || uploadingImage} className="bg-primary text-primary-foreground hover-elevate">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar"}
               </Button>
             </DialogFooter>
           </form>

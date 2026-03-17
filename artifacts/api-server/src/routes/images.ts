@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { imagesTable } from "@workspace/db/schema";
-import { eq, like, desc, and, ilike } from "drizzle-orm";
+import { imagesTable, productImagesTable } from "@workspace/db/schema";
+import { eq, desc, and, ilike, isNull } from "drizzle-orm";
 import { ObjectStorageService } from "../lib/objectStorage";
 
 const router: IRouter = Router();
@@ -31,13 +31,13 @@ router.get("/", async (req, res) => {
     const search = req.query.search as string | undefined;
     const type = req.query.type as string | undefined;
 
-    const conditions: any[] = [];
+    const conditions: any[] = [isNull(imagesTable.deletedAt)];
     if (search) conditions.push(ilike(imagesTable.name, `%${search}%`));
-    if (type && ["banner","institucional","produtos","carrossel"].includes(type)) {
+    if (type && ["banner", "institucional", "produtos", "carrossel"].includes(type)) {
       conditions.push(eq(imagesTable.type, type as any));
     }
 
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const where = and(...conditions);
 
     const allRows = await db.select().from(imagesTable).where(where).orderBy(desc(imagesTable.createdAt));
     const total = allRows.length;
@@ -72,10 +72,35 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.patch("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      res.status(400).json({ error: "Nome é obrigatório" });
+      return;
+    }
+    const [image] = await db.update(imagesTable)
+      .set({ name: name.trim() })
+      .where(and(eq(imagesTable.id, id), isNull(imagesTable.deletedAt)))
+      .returning();
+    if (!image) {
+      res.status(404).json({ error: "Imagem não encontrada" });
+      return;
+    }
+    res.json({ ...image, url: `/api/storage${image.objectPath}` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    await db.delete(imagesTable).where(eq(imagesTable.id, id));
+    await db.update(imagesTable)
+      .set({ deletedAt: new Date() })
+      .where(eq(imagesTable.id, id));
     res.json({ message: "Imagem removida com sucesso" });
   } catch (err) {
     console.error(err);

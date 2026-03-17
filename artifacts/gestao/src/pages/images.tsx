@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, Trash2, Loader2, ImageIcon, Upload, Copy, Check, ExternalLink } from "lucide-react";
+import { Plus, Search, Trash2, Loader2, ImageIcon, Upload, Copy, Check, ExternalLink, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -44,14 +44,20 @@ async function apiPost(path: string, body: any) {
   return r.json();
 }
 
-async function apiDelete(path: string) {
-  const r = await fetch(`${window.location.origin}${BASE}/api${path}`, { method: "DELETE", credentials: "include" });
+async function apiPatch(path: string, body: any) {
+  const r = await fetch(`${window.location.origin}${BASE}/api${path}`, {
+    method: "PATCH", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 
-function useImages(params: Record<string, any>) {
-  return useQuery({ queryKey: ["images", params], queryFn: () => apiGet("/images", params) });
+async function apiDelete(path: string) {
+  const r = await fetch(`${window.location.origin}${BASE}/api${path}`, { method: "DELETE", credentials: "include" });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
 export default function Images() {
@@ -63,14 +69,20 @@ export default function Images() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
 
-  const [modalOpen, setModalOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState("produtos");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
   const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameImage, setRenameImage] = useState<any | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renaming, setRenaming] = useState(false);
 
   const params = {
     search: search || undefined,
@@ -78,7 +90,10 @@ export default function Images() {
     page, limit,
   };
 
-  const { data, isLoading } = useImages(params);
+  const { data, isLoading } = useQuery({
+    queryKey: ["images", params],
+    queryFn: () => apiGet("/images", params),
+  });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiDelete(`/images/${id}`),
@@ -107,12 +122,33 @@ export default function Images() {
       await apiPost("/images", { name: formName, type: formType, objectPath });
       qc.invalidateQueries({ queryKey: ["images"] });
       toast({ title: "Imagem salva com sucesso" });
-      setModalOpen(false);
+      setUploadOpen(false);
       setFormName(""); setFormType("produtos"); setFile(null); setPreview(null);
     } catch (err: any) {
       toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleRenameOpen = (img: any) => {
+    setRenameImage(img);
+    setRenameName(img.name);
+    setRenameOpen(true);
+  };
+
+  const handleRename = async () => {
+    if (!renameImage || !renameName.trim()) return;
+    setRenaming(true);
+    try {
+      await apiPatch(`/images/${renameImage.id}`, { name: renameName.trim() });
+      qc.invalidateQueries({ queryKey: ["images"] });
+      toast({ title: "Nome atualizado" });
+      setRenameOpen(false);
+    } catch (err: any) {
+      toast({ title: "Erro ao renomear", description: err.message, variant: "destructive" });
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -133,7 +169,7 @@ export default function Images() {
             <h1 className="text-3xl font-display font-bold">Imagens</h1>
             <p className="text-muted-foreground mt-1">Gerencie imagens e obtenha URLs públicas para uso no sistema.</p>
           </div>
-          <Button onClick={() => setModalOpen(true)} className="hover-elevate bg-primary text-primary-foreground">
+          <Button onClick={() => setUploadOpen(true)} className="hover-elevate bg-primary text-primary-foreground">
             <Plus className="w-4 h-4 mr-2" /> Nova Imagem
           </Button>
         </div>
@@ -204,7 +240,17 @@ export default function Images() {
                       <ExternalLink className="w-3 h-3" />
                     </a>
                     <button
-                      onClick={() => { if (confirm("Remover esta imagem?")) deleteMutation.mutate(img.id); }}
+                      onClick={() => handleRenameOpen(img)}
+                      className="p-1.5 rounded-lg bg-card/90 backdrop-blur-sm border border-border/50 hover:bg-primary/10 hover:border-primary/50 transition-colors"
+                      title="Renomear"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm("Remover esta imagem? A exclusão é lógica e mantém o registro para auditoria."))
+                          deleteMutation.mutate(img.id);
+                      }}
                       className="p-1.5 rounded-lg bg-card/90 backdrop-blur-sm border border-border/50 hover:bg-destructive/20 hover:border-destructive/50 hover:text-destructive transition-colors"
                       title="Remover"
                     >
@@ -238,7 +284,11 @@ export default function Images() {
         </div>
       </div>
 
-      <Dialog open={modalOpen} onOpenChange={v => { setModalOpen(v); if (!v) { setFormName(""); setFormType("produtos"); setFile(null); setPreview(null); } }}>
+      {/* Upload modal */}
+      <Dialog open={uploadOpen} onOpenChange={v => {
+        setUploadOpen(v);
+        if (!v) { setFormName(""); setFormType("produtos"); setFile(null); setPreview(null); }
+      }}>
         <DialogContent className="sm:max-w-[480px] bg-card border-border/50">
           <DialogHeader>
             <DialogTitle className="text-xl font-display">Nova Imagem</DialogTitle>
@@ -282,10 +332,55 @@ export default function Images() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setUploadOpen(false)}>Cancelar</Button>
             <Button onClick={handleUpload} disabled={!file || !formName || uploading} className="hover-elevate">
               {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
               {uploading ? "Enviando..." : "Salvar Imagem"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename modal */}
+      <Dialog open={renameOpen} onOpenChange={v => { setRenameOpen(v); }}>
+        <DialogContent className="sm:max-w-[400px] bg-card border-border/50">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-display">Renomear Imagem</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {renameImage && (
+              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-xl">
+                <img
+                  src={`${BASE}${renameImage.url}`}
+                  alt={renameImage.name}
+                  className="w-12 h-12 rounded-lg object-cover border border-border/50 flex-shrink-0"
+                />
+                <div>
+                  <p className="text-xs text-muted-foreground">Arquivo atual</p>
+                  <p className="text-sm font-medium truncate max-w-[220px]">{renameImage.name}</p>
+                </div>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label>Novo nome</Label>
+              <Input
+                value={renameName}
+                onChange={e => setRenameName(e.target.value)}
+                placeholder="Nome da imagem"
+                className="bg-background"
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleRename(); } }}
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">
+                Apenas o nome é alterado. Para mudar o arquivo, exclua e faça um novo upload.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>Cancelar</Button>
+            <Button onClick={handleRename} disabled={!renameName.trim() || renaming} className="hover-elevate">
+              {renaming ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Salvar
             </Button>
           </DialogFooter>
         </DialogContent>

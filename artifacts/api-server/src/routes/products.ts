@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { productsTable, categoriesTable, productTagsTable, tagsTable, productImagesTable, imagesTable } from "@workspace/db/schema";
-import { eq, ilike, and, sql, inArray, asc } from "drizzle-orm";
+import { eq, ilike, and, sql, inArray, asc, isNull } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -32,7 +32,7 @@ async function getProductWithRelations(id: number) {
     .select({ pi: productImagesTable, img: imagesTable })
     .from(productImagesTable)
     .innerJoin(imagesTable, eq(productImagesTable.imageId, imagesTable.id))
-    .where(eq(productImagesTable.productId, id))
+    .where(and(eq(productImagesTable.productId, id), isNull(imagesTable.deletedAt)))
     .orderBy(asc(productImagesTable.displayOrder));
   const images = imageLinks.map(({ pi, img }) => ({
     id: img.id, name: img.name, type: img.type,
@@ -155,7 +155,7 @@ router.get("/:id/images", async (req, res) => {
       .select({ pi: productImagesTable, img: imagesTable })
       .from(productImagesTable)
       .innerJoin(imagesTable, eq(productImagesTable.imageId, imagesTable.id))
-      .where(eq(productImagesTable.productId, id))
+      .where(and(eq(productImagesTable.productId, id), isNull(imagesTable.deletedAt)))
       .orderBy(asc(productImagesTable.displayOrder));
     res.json(links.map(({ pi, img }) => ({
       id: img.id, name: img.name, type: img.type,
@@ -199,10 +199,13 @@ router.delete("/:id/images/:imageId", async (req, res) => {
   try {
     const productId = Number(req.params.id);
     const imageId = Number(req.params.imageId);
+    await db.update(imagesTable)
+      .set({ deletedAt: new Date() })
+      .where(eq(imagesTable.id, imageId));
     await db.delete(productImagesTable).where(
       and(eq(productImagesTable.productId, productId), eq(productImagesTable.imageId, imageId))
     );
-    res.json({ message: "Imagem desvinculada" });
+    res.json({ message: "Imagem removida" });
   } catch (err) {
     res.status(500).json({ error: "Erro interno" });
   }

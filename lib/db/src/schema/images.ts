@@ -9,6 +9,7 @@ export const imagesTable = pgTable("images", {
   type: imageTypeEnum("type").notNull().default("produtos"),
   objectPath: text("object_path").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
 });
 
 export const productImagesTable = pgTable("product_images", {
