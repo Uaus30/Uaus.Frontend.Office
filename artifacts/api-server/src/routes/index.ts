@@ -10,6 +10,7 @@ import customersRouter from "./customers";
 import usersRouter from "./users";
 import imagesRouter from "./images";
 import storageRouter from "./storage";
+import suppliersRouter from "./suppliers";
 
 const router: IRouter = Router();
 
@@ -23,6 +24,7 @@ router.use("/sales", salesRouter);
 router.use("/customers", customersRouter);
 router.use("/users", usersRouter);
 router.use("/images", imagesRouter);
+router.use("/suppliers", suppliersRouter);
 router.use(storageRouter);
 
 export default router;
