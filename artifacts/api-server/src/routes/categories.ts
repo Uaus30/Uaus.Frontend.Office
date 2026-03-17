@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { categoriesTable, productsTable } from "@workspace/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { categoriesTable, productsTable, saleItemsTable } from "@workspace/db/schema";
+import { eq, sql, inArray } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -54,6 +54,51 @@ router.delete("/:id", async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(categoriesTable).where(eq(categoriesTable.id, id));
     res.json({ message: "Categoria removida com sucesso" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.get("/:id/report", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [category] = await db.select().from(categoriesTable).where(eq(categoriesTable.id, id)).limit(1);
+    if (!category) { res.status(404).json({ error: "Categoria não encontrada" }); return; }
+
+    const products = await db.select().from(productsTable).where(eq(productsTable.categoryId, id));
+    const productIds = products.map(p => p.id);
+
+    if (productIds.length === 0) {
+      res.json({ category: { ...category, productCount: 0 }, totalRevenue: 0, totalSales: 0, totalStock: 0, products: [] });
+      return;
+    }
+
+    const saleStats = await db
+      .select({
+        productId: saleItemsTable.productId,
+        totalSales: sql<number>`sum(${saleItemsTable.quantity})`.mapWith(Number),
+        totalRevenue: sql<number>`sum(${saleItemsTable.subtotal})`.mapWith(Number),
+      })
+      .from(saleItemsTable)
+      .where(inArray(saleItemsTable.productId, productIds))
+      .groupBy(saleItemsTable.productId);
+
+    const statsMap = new Map(saleStats.map(s => [s.productId, s]));
+    const productStats = products.map(p => ({
+      id: p.id, name: p.name, stock: p.stock,
+      price: Number(p.price),
+      totalSales: statsMap.get(p.id)?.totalSales ?? 0,
+      totalRevenue: statsMap.get(p.id)?.totalRevenue ?? 0,
+    }));
+
+    res.json({
+      category: { ...category, productCount: productIds.length },
+      totalRevenue: productStats.reduce((s, p) => s + p.totalRevenue, 0),
+      totalSales: productStats.reduce((s, p) => s + p.totalSales, 0),
+      totalStock: productStats.reduce((s, p) => s + p.stock, 0),
+      products: productStats,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erro interno" });
