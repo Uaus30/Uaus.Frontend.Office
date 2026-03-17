@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { customersTable, salesTable } from "@workspace/db/schema";
-import { eq, like, sql, and } from "drizzle-orm";
+import { eq, ilike, sql, and } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -22,7 +22,7 @@ router.get("/", async (req, res) => {
     const search = req.query.search as string | undefined;
     const offset = (page - 1) * limit;
 
-    const whereClause = search ? like(customersTable.name, `%${search}%`) : undefined;
+    const whereClause = search ? ilike(customersTable.name, `%${search}%`) : undefined;
     const [{ count }] = await db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(customersTable).where(whereClause);
     const customers = await db.select().from(customersTable).where(whereClause).orderBy(customersTable.name).limit(limit).offset(offset);
 

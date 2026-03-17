@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { productsTable, categoriesTable, productTagsTable, tagsTable, productImagesTable, imagesTable } from "@workspace/db/schema";
-import { eq, like, and, sql, inArray, asc } from "drizzle-orm";
+import { eq, ilike, and, sql, inArray, asc } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -65,7 +65,7 @@ router.get("/", async (req, res) => {
     }
 
     const conditions: any[] = [];
-    if (search) conditions.push(like(productsTable.name, `%${search}%`));
+    if (search) conditions.push(ilike(productsTable.name, `%${search}%`));
     if (categoryId) conditions.push(eq(productsTable.categoryId, categoryId));
     if (productIds) conditions.push(inArray(productsTable.id, productIds));
 
