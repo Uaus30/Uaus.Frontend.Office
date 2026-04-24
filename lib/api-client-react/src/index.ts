@@ -101,6 +101,8 @@ export interface ProductGroupDto {
   categoryId: number;
   name: string;
   description: string | null;
+  hasVariations: boolean;
+  canDelete: boolean;
 }
 
 export interface ProductDto {
@@ -114,6 +116,7 @@ export interface ProductDto {
   costPrice: number;
   stock: number;
   status: number;
+  canDelete: boolean;
 }
 
 export interface TagDto {

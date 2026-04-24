@@ -199,11 +199,13 @@ export async function getAllSuppliers() {
 
 export async function getProductsPage(params?: {
   search?: string;
+  productGroupId?: number;
   page?: number;
   limit?: number;
 }) {
   return getPaged<ProductDto>("/Products", {
     search: params?.search,
+    productGroupId: params?.productGroupId,
     page: params?.page ?? 1,
     size: params?.limit ?? 20,
   });
@@ -505,6 +507,7 @@ export async function createOrReuseProductGroup(payload: {
   categoryId: number;
   name: string;
   description?: string | null;
+  hasVariations?: boolean;
   existingGroups: ProductGroupDto[];
 }) {
   const existing = payload.existingGroups.find(
@@ -519,6 +522,7 @@ export async function createOrReuseProductGroup(payload: {
     categoryId: payload.categoryId,
     name: payload.name.trim(),
     description: payload.description?.trim() || null,
+    hasVariations: payload.hasVariations ?? false,
   });
 
   const createdId = extractCreatedId(response.response);
@@ -527,6 +531,45 @@ export async function createOrReuseProductGroup(payload: {
   }
 
   return createdId;
+}
+
+export async function createProductGroup(payload: {
+  categoryId: number;
+  name: string;
+  description?: string | null;
+  hasVariations: boolean;
+}) {
+  const response = await apiPost<null>("/ProductGroups", {
+    categoryId: payload.categoryId,
+    name: payload.name.trim(),
+    description: payload.description?.trim() || null,
+    hasVariations: payload.hasVariations,
+  });
+
+  const createdId = extractCreatedId(response.response);
+  if (!createdId) {
+    throw new Error("Não foi possível identificar o grupo de produto criado.");
+  }
+
+  return createdId;
+}
+
+export async function updateProductGroup(payload: {
+  id: number;
+  categoryId: number;
+  name: string;
+  description?: string | null;
+  hasVariations: boolean;
+}) {
+  await apiPut<ProductGroupDto>("/ProductGroups", {
+    id: payload.id,
+    categoryId: payload.categoryId,
+    name: payload.name.trim(),
+    description: payload.description?.trim() || null,
+    hasVariations: payload.hasVariations,
+  });
+
+  return payload.id;
 }
 
 export async function upsertProduct(payload: {

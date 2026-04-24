@@ -1,20 +1,19 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Edit2, ImageIcon, Loader2, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/formatters";
 import {
   buildProductCollections,
   buildPublicImageUrl,
   createImageFromFile,
-  createOrReuseProductGroup,
+  createProductGroup,
   deleteProduct,
   getAllCategories,
   getAllDepartments,
@@ -27,18 +26,32 @@ import {
   getProductsPage,
   syncProductImages,
   syncProductTags,
+  updateProductGroup,
   upsertProduct,
 } from "@/lib/backend";
+import { Edit2, ImageIcon, Loader2, Plus, Save, Search, Trash2, Upload, X } from "lucide-react";
 
-type ProductForm = {
+type ProductGroupForm = {
   departmentId: string;
   categoryId: string;
   productGroupName: string;
+  hasVariations: boolean;
+};
+
+type ProductEditorForm = {
+  id: number | null;
   name: string;
   description: string;
   price: number;
   status: string;
   tagIds: number[];
+};
+
+type VariationDraft = {
+  name: string;
+  description: string;
+  price: number;
+  status: string;
 };
 
 type LocalImage = {
@@ -49,6 +62,26 @@ type LocalImage = {
   file?: File;
 };
 
+function createEmptyProductEditor(defaultStatus = ""): ProductEditorForm {
+  return {
+    id: null,
+    name: "",
+    description: "",
+    price: 0,
+    status: defaultStatus,
+    tagIds: [],
+  };
+}
+
+function createEmptyVariationDraft(defaultStatus = ""): VariationDraft {
+  return {
+    name: "",
+    description: "",
+    price: 0,
+    status: defaultStatus,
+  };
+}
+
 export default function Products() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -57,19 +90,19 @@ export default function Products() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  const [activeVariationId, setActiveVariationId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingVariation, setSavingVariation] = useState(false);
   const [images, setImages] = useState<LocalImage[]>([]);
-  const [form, setForm] = useState<ProductForm>({
+  const [form, setForm] = useState<ProductGroupForm>({
     departmentId: "",
     categoryId: "",
     productGroupName: "",
-    name: "",
-    description: "",
-    price: 0,
-    status: "",
-    tagIds: [],
+    hasVariations: false,
   });
+  const [productEditor, setProductEditor] = useState<ProductEditorForm>(createEmptyProductEditor());
+  const [variationDraft, setVariationDraft] = useState<VariationDraft>(createEmptyVariationDraft());
 
   const { data: departments = [] } = useQuery({
     queryKey: ["departments-all-for-products"],
@@ -116,10 +149,27 @@ export default function Products() {
     queryFn: () => getProductsPage({ search, page, limit }),
   });
 
+  const {
+    data: groupProductsPage,
+    isFetching: isFetchingGroupProducts,
+    refetch: refetchGroupProducts,
+  } = useQuery({
+    queryKey: ["products-by-group", editingGroupId],
+    enabled: modalOpen && editingGroupId != null,
+    queryFn: () =>
+      getProductsPage({
+        productGroupId: editingGroupId ?? undefined,
+        page: 1,
+        limit: 200,
+      }),
+  });
+
   const selectableStatusOptions = useMemo(
     () => statusOptions.filter((item) => item.allowSelect),
     [statusOptions],
   );
+
+  const defaultStatus = selectableStatusOptions[0]?.id?.toString() ?? "";
 
   const enrichedProducts = useMemo(() => {
     const pageProducts = productPage?.data ?? [];
@@ -135,6 +185,20 @@ export default function Products() {
     }).enrichedProducts;
   }, [categories, departments, imagesCatalog, productGroups, productImages, productPage?.data, productTags, tags]);
 
+  const enrichedGroupProducts = useMemo(() => {
+    const groupProducts = groupProductsPage?.data ?? [];
+    return buildProductCollections({
+      products: groupProducts,
+      productGroups,
+      categories,
+      departments,
+      tags,
+      productTags,
+      images: imagesCatalog,
+      productImages,
+    }).enrichedProducts;
+  }, [categories, departments, groupProductsPage?.data, imagesCatalog, productGroups, productImages, productTags, tags]);
+
   const filteredCategories = useMemo(
     () =>
       categories.filter((category) =>
@@ -143,48 +207,84 @@ export default function Products() {
     [categories, form.departmentId],
   );
 
+  function applyProductToEditor(product?: any) {
+    if (!product) {
+      setActiveVariationId(null);
+      setProductEditor(createEmptyProductEditor(defaultStatus));
+      setImages([]);
+      return;
+    }
+
+    setActiveVariationId(product.id);
+    setProductEditor({
+      id: product.id,
+      name: product.name,
+      description: product.description || "",
+      price: product.price,
+      status: String(product.status),
+      tagIds: product.tags.map((tag: any) => tag.id),
+    });
+    setImages(
+      product.images.map((item: any) => ({
+        imageId: item.imageId,
+        associationId: item.associationId,
+        name: item.image.name,
+        url: buildPublicImageUrl(item.image.url),
+      })),
+    );
+  }
+
   function resetForm() {
-    setEditingId(null);
+    setEditingGroupId(null);
+    setActiveVariationId(null);
     setForm({
       departmentId: departments[0]?.id.toString() ?? "",
       categoryId: "",
       productGroupName: "",
-      name: "",
-      description: "",
-      price: 0,
-      status: selectableStatusOptions[0]?.id.toString() ?? "",
-      tagIds: [],
+      hasVariations: false,
     });
+    setProductEditor(createEmptyProductEditor(defaultStatus));
+    setVariationDraft(createEmptyVariationDraft(defaultStatus));
     setImages([]);
   }
 
   function openModal(product?: any) {
     if (product) {
-      setEditingId(product.id);
+      setEditingGroupId(product.productGroup?.id ?? product.productGroupId);
       setForm({
         departmentId: product.department?.id.toString() ?? "",
         categoryId: product.category?.id.toString() ?? "",
         productGroupName: product.productGroup?.name ?? "",
-        name: product.name,
-        description: product.description || "",
-        price: product.price,
-        status: String(product.status),
-        tagIds: product.tags.map((tag) => tag.id),
+        hasVariations: product.productGroup?.hasVariations ?? false,
       });
-      setImages(
-        product.images.map((item) => ({
-          imageId: item.imageId,
-          associationId: item.associationId,
-          name: item.image.name,
-          url: buildPublicImageUrl(item.image.url),
-        })),
-      );
+      setVariationDraft(createEmptyVariationDraft(String(product.status ?? defaultStatus)));
+      applyProductToEditor(product.productGroup?.hasVariations ? product : product);
     } else {
       resetForm();
     }
 
     setModalOpen(true);
   }
+
+  useEffect(() => {
+    if (!modalOpen) return;
+
+    setVariationDraft((current) =>
+      current.status ? current : { ...current, status: defaultStatus },
+    );
+
+    setProductEditor((current) =>
+      current.status ? current : { ...current, status: defaultStatus },
+    );
+  }, [defaultStatus, modalOpen]);
+
+  useEffect(() => {
+    if (!modalOpen || form.hasVariations || productEditor.id || enrichedGroupProducts.length === 0) {
+      return;
+    }
+
+    applyProductToEditor(enrichedGroupProducts[0]);
+  }, [enrichedGroupProducts, form.hasVariations, modalOpen, productEditor.id]);
 
   function moveImage(index: number, direction: -1 | 1) {
     setImages((current) => {
@@ -207,80 +307,117 @@ export default function Products() {
     setImages((current) => [...current, ...nextImages]);
   }
 
+  async function invalidateProductQueries(groupId?: number | null) {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["products-page"] }),
+      queryClient.invalidateQueries({ queryKey: ["product-groups-all-for-products"] }),
+      queryClient.invalidateQueries({ queryKey: ["product-tags-all-for-products"] }),
+      queryClient.invalidateQueries({ queryKey: ["product-images-all-for-products"] }),
+      queryClient.invalidateQueries({ queryKey: ["images-all-for-products"] }),
+      queryClient.invalidateQueries({ queryKey: ["products-by-group", groupId ?? editingGroupId] }),
+    ]);
+  }
+
+  async function persistGroup() {
+    if (!form.categoryId || !form.productGroupName.trim()) {
+      throw new Error("Preencha categoria e nome do produto pai.");
+    }
+
+    if (editingGroupId) {
+      await updateProductGroup({
+        id: editingGroupId,
+        categoryId: Number(form.categoryId),
+        name: form.productGroupName,
+        hasVariations: form.hasVariations,
+      });
+      return editingGroupId;
+    }
+
+    const createdGroupId = await createProductGroup({
+      categoryId: Number(form.categoryId),
+      name: form.productGroupName,
+      hasVariations: form.hasVariations,
+    });
+    setEditingGroupId(createdGroupId);
+    return createdGroupId;
+  }
+
+  async function persistProductAssociations(productId: number, tagIds: number[]) {
+    const currentTagAssociations = productTags.filter((item) => item.productId === productId);
+    await syncProductTags({
+      productId,
+      currentAssociations: currentTagAssociations,
+      nextTagIds: tagIds,
+    });
+
+    const persistedNewImages = [];
+    for (const image of images) {
+      if (image.imageId || !image.file) continue;
+      const created = await createImageFromFile({
+        file: image.file,
+        name: image.name,
+        type: 3,
+      });
+      persistedNewImages.push({
+        ...image,
+        imageId: created.id,
+        url: buildPublicImageUrl(created.url),
+      });
+    }
+
+    const allImages = images
+      .filter((image) => image.imageId)
+      .concat(persistedNewImages)
+      .map((image, index) => ({
+        imageId: image.imageId as number,
+        displayOrder: index,
+      }));
+
+    await syncProductImages({
+      productId,
+      currentAssociations: productImages.filter((item) => item.productId === productId),
+      nextImages: allImages,
+    });
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
 
-    if (!form.categoryId || !form.productGroupName.trim() || !form.name.trim() || !form.status) {
-      toast({
-        title: "Preencha categoria, grupo, nome e status.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setSaving(true);
     try {
-      const productGroupId = await createOrReuseProductGroup({
-        categoryId: Number(form.categoryId),
-        name: form.productGroupName,
-        existingGroups: productGroups,
-      });
+      const groupId = await persistGroup();
 
-      const productId = await upsertProduct({
-        id: editingId,
-        productGroupId,
-        name: form.name,
-        description: form.description,
-        price: form.price,
-        status: Number(form.status),
-      });
+      if (!form.hasVariations) {
+        if (!productEditor.name.trim() || !productEditor.status) {
+          throw new Error("Preencha nome, status e os dados do produto simples.");
+        }
 
-      const currentTagAssociations = productTags.filter((item) => item.productId === productId);
-      await syncProductTags({
-        productId,
-        currentAssociations: currentTagAssociations,
-        nextTagIds: form.tagIds,
-      });
-
-      const persistedNewImages = [];
-      for (const image of images) {
-        if (image.imageId || !image.file) continue;
-        const created = await createImageFromFile({
-          file: image.file,
-          name: image.name,
-          type: 3,
+        const productId = await upsertProduct({
+          id: productEditor.id,
+          productGroupId: groupId,
+          name: productEditor.name,
+          description: productEditor.description,
+          price: productEditor.price,
+          status: Number(productEditor.status),
         });
-        persistedNewImages.push({
-          ...image,
-          imageId: created.id,
-          url: buildPublicImageUrl(created.url),
-        });
+
+        await persistProductAssociations(productId, productEditor.tagIds);
       }
 
-      const allImages = images
-        .filter((image) => image.imageId)
-        .concat(persistedNewImages)
-        .map((image) => ({
-          imageId: image.imageId as number,
-          displayOrder: 0,
-        }))
-        .map((image, index) => ({ ...image, displayOrder: index }));
+      await invalidateProductQueries(groupId);
 
-      await syncProductImages({
-        productId,
-        currentAssociations: productImages.filter((item) => item.productId === productId),
-        nextImages: allImages,
+      if (form.hasVariations && editingGroupId) {
+        await refetchGroupProducts();
+      }
+
+      toast({
+        title: form.hasVariations ? "Grupo salvo." : editingGroupId ? "Produto atualizado." : "Produto criado.",
       });
 
-      queryClient.invalidateQueries({ queryKey: ["products-page"] });
-      queryClient.invalidateQueries({ queryKey: ["product-groups-all-for-products"] });
-      queryClient.invalidateQueries({ queryKey: ["product-tags-all-for-products"] });
-      queryClient.invalidateQueries({ queryKey: ["product-images-all-for-products"] });
-      queryClient.invalidateQueries({ queryKey: ["images-all-for-products"] });
-
-      toast({ title: editingId ? "Produto atualizado." : "Produto criado." });
-      setModalOpen(false);
-      resetForm();
+      if (!form.hasVariations) {
+        setModalOpen(false);
+        resetForm();
+      }
     } catch (error) {
       toast({
         title: "Erro ao salvar produto",
@@ -292,10 +429,109 @@ export default function Products() {
     }
   }
 
+  async function handleSaveVariationEditor() {
+    if (!editingGroupId) {
+      toast({
+        title: "Salve o produto pai antes de editar uma variação.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!productEditor.id || !productEditor.name.trim() || !productEditor.status) {
+      toast({
+        title: "Selecione uma variação existente e preencha nome e status.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSavingVariation(true);
+    try {
+      const productId = await upsertProduct({
+        id: productEditor.id,
+        productGroupId: editingGroupId,
+        name: productEditor.name,
+        description: productEditor.description,
+        price: productEditor.price,
+        status: Number(productEditor.status),
+      });
+
+      await persistProductAssociations(productId, productEditor.tagIds);
+      await invalidateProductQueries(editingGroupId);
+      await refetchGroupProducts();
+
+      toast({ title: "Variação atualizada." });
+    } catch (error) {
+      toast({
+        title: "Erro ao salvar variação",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingVariation(false);
+    }
+  }
+
+  async function handleCreateVariation() {
+    setSavingVariation(true);
+    try {
+      if (!variationDraft.name.trim() || !variationDraft.status) {
+        throw new Error("Preencha nome e status da nova variação.");
+      }
+
+      const groupId = await persistGroup();
+      const productId = await upsertProduct({
+        productGroupId: groupId,
+        name: variationDraft.name,
+        description: variationDraft.description,
+        price: variationDraft.price,
+        status: Number(variationDraft.status),
+      });
+
+      await invalidateProductQueries(groupId);
+      const result = await refetchGroupProducts();
+      const createdVariation = result.data?.data.find((item) => item.id === productId);
+
+      setVariationDraft(createEmptyVariationDraft(defaultStatus));
+      if (createdVariation) {
+        const enriched = buildProductCollections({
+          products: [createdVariation],
+          productGroups,
+          categories,
+          departments,
+          tags,
+          productTags,
+          images: imagesCatalog,
+          productImages,
+        }).enrichedProducts[0];
+        applyProductToEditor(enriched);
+      }
+
+      toast({ title: "Variação criada." });
+    } catch (error) {
+      toast({
+        title: "Erro ao criar variação",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingVariation(false);
+    }
+  }
+
   async function handleDelete(productId: number) {
     try {
       await deleteProduct(productId);
-      queryClient.invalidateQueries({ queryKey: ["products-page"] });
+      await invalidateProductQueries(editingGroupId);
+      if (editingGroupId) {
+        await refetchGroupProducts();
+      }
+
+      if (activeVariationId === productId) {
+        applyProductToEditor(undefined);
+      }
+
       toast({ title: "Produto removido." });
     } catch (error) {
       toast({
@@ -346,6 +582,7 @@ export default function Products() {
                   <th className="px-6 py-4">Departamento</th>
                   <th className="px-6 py-4">Categoria</th>
                   <th className="px-6 py-4">Grupo</th>
+                  <th className="px-6 py-4">Tipo</th>
                   <th className="px-6 py-4">Preço</th>
                   <th className="px-6 py-4">Estoque</th>
                   <th className="px-6 py-4">Etiquetas</th>
@@ -356,13 +593,15 @@ export default function Products() {
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center">
+                    <td colSpan={11} className="py-12 text-center">
                       <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
                     </td>
                   </tr>
                 ) : (
                   enrichedProducts.map((product) => {
                     const mainImage = product.images[0]?.image;
+                    const deleteDisabled = !product.canDelete;
+
                     return (
                       <tr key={product.id} className="border-b border-border/50 transition-colors hover:bg-muted/20">
                         <td className="px-6 py-4 font-medium text-foreground">{product.name}</td>
@@ -378,6 +617,11 @@ export default function Products() {
                         <td className="px-6 py-4 text-muted-foreground">{product.department?.name || "-"}</td>
                         <td className="px-6 py-4 text-muted-foreground">{product.category?.name || "-"}</td>
                         <td className="px-6 py-4 text-muted-foreground">{product.productGroup?.name || "-"}</td>
+                        <td className="px-6 py-4">
+                          <Badge variant={product.productGroup?.hasVariations ? "outline" : "default"}>
+                            {product.productGroup?.hasVariations ? "Variação" : "Simples"}
+                          </Badge>
+                        </td>
                         <td className="px-6 py-4 font-medium text-primary">{formatCurrency(product.price)}</td>
                         <td className="px-6 py-4">
                           <span className={`rounded-md px-2.5 py-1 text-xs font-semibold ${product.stock < 10 ? "bg-destructive/20 text-destructive" : "bg-secondary text-secondary-foreground"}`}>
@@ -411,7 +655,9 @@ export default function Products() {
                             <Button
                               size="icon"
                               variant="ghost"
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate"
+                              disabled={deleteDisabled}
+                              title={deleteDisabled ? "Este produto não pode ser excluído agora." : "Excluir produto"}
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => {
                                 if (confirm("Remover este produto?")) {
                                   void handleDelete(product.id);
@@ -464,157 +710,425 @@ export default function Products() {
         </div>
       </div>
 
-      <Dialog open={modalOpen} onOpenChange={(open) => !open ? setModalOpen(false) : setModalOpen(true)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto border-border/50 bg-card sm:max-w-[760px]">
+      <Dialog
+        open={modalOpen}
+        onOpenChange={(open) => {
+          setModalOpen(open);
+          if (!open) resetForm();
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-border/50 bg-card sm:max-w-[960px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-display">{editingId ? "Editar Produto" : "Novo Produto"}</DialogTitle>
+            <DialogTitle className="text-xl font-display">{editingGroupId ? "Editar Produto" : "Novo Produto"}</DialogTitle>
           </DialogHeader>
+
           <form onSubmit={handleSubmit} className="space-y-5 py-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Departamento</label>
-                <Select
-                  value={form.departmentId}
-                  onValueChange={(value) =>
+            <div className="space-y-3 rounded-2xl border border-border/50 bg-background/40 p-4">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Produto pai</h2>
+                <p className="text-sm text-muted-foreground">O cadastro principal da modal edita o `ProductGroup`.</p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Departamento</label>
+                  <Select
+                    value={form.departmentId}
+                    onValueChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        departmentId: value,
+                        categoryId: "",
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {departments.map((department) => (
+                        <SelectItem key={department.id} value={department.id.toString()}>
+                          {department.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Categoria</label>
+                  <Select value={form.categoryId} onValueChange={(value) => setForm((current) => ({ ...current, categoryId: value }))}>
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredCategories.map((category) => (
+                        <SelectItem key={category.id} value={category.id.toString()}>
+                          {category.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2 sm:col-span-2">
+                  <label className="text-sm font-medium">Nome do Produto Pai</label>
+                  <Input value={form.productGroupName} onChange={(event) => setForm((current) => ({ ...current, productGroupName: event.target.value }))} className="bg-background" placeholder="Ex: Copo térmico 500ml" />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-3 rounded-xl border border-border/50 bg-card px-4 py-3 text-sm">
+                <Checkbox
+                  checked={form.hasVariations}
+                  onCheckedChange={(checked) =>
                     setForm((current) => ({
                       ...current,
-                      departmentId: value,
-                      categoryId: "",
+                      hasVariations: checked === true,
                     }))
                   }
-                >
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {departments.map((department) => (
-                      <SelectItem key={department.id} value={department.id.toString()}>
-                        {department.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Categoria</label>
-                <Select value={form.categoryId} onValueChange={(value) => setForm((current) => ({ ...current, categoryId: value }))}>
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredCategories.map((category) => (
-                      <SelectItem key={category.id} value={category.id.toString()}>
-                        {category.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Grupo Comercial</label>
-                <Input value={form.productGroupName} onChange={(event) => setForm((current) => ({ ...current, productGroupName: event.target.value }))} className="bg-background" placeholder="Ex: Copo térmico 500ml" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Nome do Produto</label>
-                <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="bg-background" placeholder="Ex: Copo térmico 500ml azul" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Descrição</label>
-                <Input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} className="bg-background" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Preço de Venda (R$)</label>
-                <Input type="number" step="0.01" min="0" value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: Number(event.target.value) }))} className="bg-background" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Status</label>
-                <Select value={form.status} onValueChange={(value) => setForm((current) => ({ ...current, status: value }))}>
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectableStatusOptions.map((status) => (
-                      <SelectItem key={status.id} value={status.id.toString()}>
-                        {status.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                />
+                <div>
+                  <p className="font-medium">Este produto possui variações</p>
+                  <p className="text-muted-foreground">Quando ativo, o grupo organiza vários `Products`; quando desligado, mantém apenas um item vendável.</p>
+                </div>
+              </label>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Etiquetas</label>
-              <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-background/50 p-3 sm:grid-cols-3">
-                {tags.map((tag) => (
-                  <label key={tag.id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={form.tagIds.includes(tag.id)}
-                      onCheckedChange={(checked) =>
-                        setForm((current) => ({
-                          ...current,
-                          tagIds: checked
-                            ? [...current.tagIds, tag.id]
-                            : current.tagIds.filter((id) => id !== tag.id),
-                        }))
-                      }
-                    />
-                    <span style={{ color: tag.color }}>{tag.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
+            {!form.hasVariations ? (
+              <div className="space-y-5 rounded-2xl border border-border/50 bg-background/40 p-4">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Produto simples</h2>
+                  <p className="text-sm text-muted-foreground">Com `hasVariations = false`, o grupo mantém apenas um `Product` vinculado.</p>
+                </div>
 
-            <div className="space-y-3 border-t border-border/30 pt-3">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Imagens do Produto</label>
-                <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary">
-                  <Upload className="h-4 w-4" />
-                  Adicionar imagens
-                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelection} />
-                </label>
-              </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Nome do Produto</label>
+                    <Input value={productEditor.name} onChange={(event) => setProductEditor((current) => ({ ...current, name: event.target.value }))} className="bg-background" placeholder="Ex: Copo térmico 500ml azul" />
+                  </div>
 
-              {images.length > 0 ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {images.map((image, index) => (
-                    <div key={`${image.name}-${index}`} className="relative overflow-hidden rounded-xl border border-border/50 bg-background/50">
-                      <img src={image.url} alt={image.name} className="aspect-square w-full object-cover" />
-                      <div className="p-2">
-                        <p className="truncate text-xs font-medium">{image.name}</p>
-                        {index === 0 && <p className="mt-1 text-[10px] text-primary">Imagem principal</p>}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Preço de Venda (R$)</label>
+                    <Input type="number" step="0.01" min="0" value={productEditor.price} onChange={(event) => setProductEditor((current) => ({ ...current, price: Number(event.target.value) }))} className="bg-background" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Descrição</label>
+                    <Input value={productEditor.description} onChange={(event) => setProductEditor((current) => ({ ...current, description: event.target.value }))} className="bg-background" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Status</label>
+                    <Select value={productEditor.status} onValueChange={(value) => setProductEditor((current) => ({ ...current, status: value }))}>
+                      <SelectTrigger className="bg-background">
+                        <SelectValue placeholder="Selecione..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectableStatusOptions.map((status) => (
+                          <SelectItem key={status.id} value={status.id.toString()}>
+                            {status.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Etiquetas</label>
+                  <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-background/50 p-3 sm:grid-cols-3">
+                    {tags.map((tag) => (
+                      <label key={tag.id} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={productEditor.tagIds.includes(tag.id)}
+                          onCheckedChange={(checked) =>
+                            setProductEditor((current) => ({
+                              ...current,
+                              tagIds: checked === true
+                                ? [...current.tagIds, tag.id]
+                                : current.tagIds.filter((id) => id !== tag.id),
+                            }))
+                          }
+                        />
+                        <span style={{ color: tag.color }}>{tag.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3 border-t border-border/30 pt-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">Imagens do Produto</label>
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary">
+                      <Upload className="h-4 w-4" />
+                      Adicionar imagens
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelection} />
+                    </label>
+                  </div>
+
+                  {images.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {images.map((image, index) => (
+                        <div key={`${image.name}-${index}`} className="relative overflow-hidden rounded-xl border border-border/50 bg-background/50">
+                          <img src={image.url} alt={image.name} className="aspect-square w-full object-cover" />
+                          <div className="p-2">
+                            <p className="truncate text-xs font-medium">{image.name}</p>
+                            {index === 0 && <p className="mt-1 text-[10px] text-primary">Imagem principal</p>}
+                          </div>
+                          <div className="absolute right-2 top-2 flex gap-1">
+                            <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, -1)} disabled={index === 0}>
+                              ↑
+                            </button>
+                            <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, 1)} disabled={index === images.length - 1}>
+                              ↓
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded bg-card/90 p-1 text-destructive"
+                              onClick={() => setImages((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border-2 border-dashed border-border/40 p-8 text-center text-muted-foreground">
+                      Nenhuma imagem selecionada.
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-5 rounded-2xl border border-border/50 bg-background/40 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Variações</h2>
+                    <p className="text-sm text-muted-foreground">A listagem abaixo é carregada por `GET /Products?productGroupId={editingGroupId}`.</p>
+                  </div>
+                  {isFetchingGroupProducts && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                </div>
+
+                {editingGroupId == null ? (
+                  <div className="rounded-xl border border-dashed border-border/50 p-6 text-sm text-muted-foreground">
+                    Salve o produto pai para começar a cadastrar as variações.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-border/50">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-muted/30 text-xs uppercase text-muted-foreground">
+                        <tr>
+                          <th className="px-4 py-3">Nome</th>
+                          <th className="px-4 py-3">Descrição</th>
+                          <th className="px-4 py-3">Preço</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-b border-border/50 bg-primary/5">
+                          <td className="px-4 py-3">
+                            <Input value={variationDraft.name} onChange={(event) => setVariationDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Nova variação" className="bg-background" />
+                          </td>
+                          <td className="px-4 py-3">
+                            <Input value={variationDraft.description} onChange={(event) => setVariationDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Descrição opcional" className="bg-background" />
+                          </td>
+                          <td className="px-4 py-3">
+                            <Input type="number" step="0.01" min="0" value={variationDraft.price} onChange={(event) => setVariationDraft((current) => ({ ...current, price: Number(event.target.value) }))} className="bg-background" />
+                          </td>
+                          <td className="px-4 py-3">
+                            <Select value={variationDraft.status} onValueChange={(value) => setVariationDraft((current) => ({ ...current, status: value }))}>
+                              <SelectTrigger className="bg-background">
+                                <SelectValue placeholder="Selecione..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {selectableStatusOptions.map((status) => (
+                                  <SelectItem key={status.id} value={status.id.toString()}>
+                                    {status.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Button type="button" size="sm" disabled={savingVariation} onClick={() => void handleCreateVariation()}>
+                              {savingVariation ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                            </Button>
+                          </td>
+                        </tr>
+
+                        {enrichedGroupProducts.map((product) => (
+                          <tr key={product.id} className="border-b border-border/50 last:border-b-0">
+                            <td className="px-4 py-3 font-medium text-foreground">{product.name}</td>
+                            <td className="px-4 py-3 text-muted-foreground">{product.description || "-"}</td>
+                            <td className="px-4 py-3 text-primary">{formatCurrency(product.price)}</td>
+                            <td className="px-4 py-3">
+                              <Badge variant={product.status === 2 ? "default" : "outline"}>
+                                {statusOptions.find((option) => option.id === product.status)?.name ?? product.status}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button type="button" size="icon" variant="ghost" onClick={() => applyProductToEditor(product)}>
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  disabled={!product.canDelete}
+                                  title={!product.canDelete ? "Esta variação não pode ser excluída agora." : "Excluir variação"}
+                                  className="disabled:cursor-not-allowed disabled:opacity-40"
+                                  onClick={() => {
+                                    if (confirm("Remover esta variação?")) {
+                                      void handleDelete(product.id);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {productEditor.id ? (
+                  <div className="space-y-5 rounded-2xl border border-border/50 bg-card/80 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Editar variação</h3>
+                        <p className="text-sm text-muted-foreground">Cada `Product` continua sendo o item final vendável.</p>
                       </div>
-                      <div className="absolute right-2 top-2 flex gap-1">
-                        <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, -1)} disabled={index === 0}>
-                          ↑
-                        </button>
-                        <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, 1)} disabled={index === images.length - 1}>
-                          ↓
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded bg-card/90 p-1 text-destructive"
-                          onClick={() => setImages((current) => current.filter((_, currentIndex) => currentIndex !== index))}
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => applyProductToEditor(undefined)}>
+                        Limpar seleção
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Nome da variação</label>
+                        <Input value={productEditor.name} onChange={(event) => setProductEditor((current) => ({ ...current, name: event.target.value }))} className="bg-background" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Preço de Venda (R$)</label>
+                        <Input type="number" step="0.01" min="0" value={productEditor.price} onChange={(event) => setProductEditor((current) => ({ ...current, price: Number(event.target.value) }))} className="bg-background" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Descrição</label>
+                        <Input value={productEditor.description} onChange={(event) => setProductEditor((current) => ({ ...current, description: event.target.value }))} className="bg-background" />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Status</label>
+                        <Select value={productEditor.status} onValueChange={(value) => setProductEditor((current) => ({ ...current, status: value }))}>
+                          <SelectTrigger className="bg-background">
+                            <SelectValue placeholder="Selecione..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {selectableStatusOptions.map((status) => (
+                              <SelectItem key={status.id} value={status.id.toString()}>
+                                {status.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border-2 border-dashed border-border/40 p-8 text-center text-muted-foreground">
-                  Nenhuma imagem selecionada.
-                </div>
-              )}
-            </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Etiquetas</label>
+                      <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-background/50 p-3 sm:grid-cols-3">
+                        {tags.map((tag) => (
+                          <label key={tag.id} className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                              checked={productEditor.tagIds.includes(tag.id)}
+                              onCheckedChange={(checked) =>
+                                setProductEditor((current) => ({
+                                  ...current,
+                                  tagIds: checked === true
+                                    ? [...current.tagIds, tag.id]
+                                    : current.tagIds.filter((id) => id !== tag.id),
+                                }))
+                              }
+                            />
+                            <span style={{ color: tag.color }}>{tag.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 border-t border-border/30 pt-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium">Imagens da Variação</label>
+                        <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary">
+                          <Upload className="h-4 w-4" />
+                          Adicionar imagens
+                          <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelection} />
+                        </label>
+                      </div>
+
+                      {images.length > 0 ? (
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                          {images.map((image, index) => (
+                            <div key={`${image.name}-${index}`} className="relative overflow-hidden rounded-xl border border-border/50 bg-background/50">
+                              <img src={image.url} alt={image.name} className="aspect-square w-full object-cover" />
+                              <div className="p-2">
+                                <p className="truncate text-xs font-medium">{image.name}</p>
+                                {index === 0 && <p className="mt-1 text-[10px] text-primary">Imagem principal</p>}
+                              </div>
+                              <div className="absolute right-2 top-2 flex gap-1">
+                                <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, -1)} disabled={index === 0}>
+                                  ↑
+                                </button>
+                                <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, 1)} disabled={index === images.length - 1}>
+                                  ↓
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded bg-card/90 p-1 text-destructive"
+                                  onClick={() => setImages((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border-2 border-dashed border-border/40 p-8 text-center text-muted-foreground">
+                          Nenhuma imagem selecionada.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button type="button" disabled={savingVariation} className="bg-primary text-primary-foreground hover-elevate" onClick={() => void handleSaveVariationEditor()}>
+                        {savingVariation ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                        Salvar variação
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/50 p-6 text-sm text-muted-foreground">
+                    Selecione uma variação existente para editar etiquetas e imagens.
+                  </div>
+                )}
+              </div>
+            )}
 
             <DialogFooter className="pt-4">
               <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
                 Cancelar
               </Button>
               <Button type="submit" disabled={saving} className="bg-primary text-primary-foreground hover-elevate">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salvar"}
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : form.hasVariations ? "Salvar grupo" : "Salvar"}
               </Button>
             </DialogFooter>
           </form>
