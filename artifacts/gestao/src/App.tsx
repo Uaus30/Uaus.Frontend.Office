@@ -6,12 +6,14 @@ import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
 import Products from "@/pages/products";
+import Departments from "@/pages/departments";
 import Categories from "@/pages/categories";
 import Tags from "@/pages/tags";
 import Sales from "@/pages/sales";
 import Customers from "@/pages/customers";
 import Users from "@/pages/users";
 import Images from "@/pages/images";
+import Suppliers from "@/pages/suppliers";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,10 +31,12 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/produtos" component={Products} />
+      <Route path="/departamentos" component={Departments} />
       <Route path="/categorias" component={Categories} />
       <Route path="/etiquetas" component={Tags} />
       <Route path="/vendas" component={Sales} />
       <Route path="/clientes" component={Customers} />
+      <Route path="/fornecedores" component={Suppliers} />
       <Route path="/usuarios" component={Users} />
       <Route path="/imagens" component={Images} />
       <Route component={NotFound} />

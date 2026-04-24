@@ -1,20 +1,22 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout";
-import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Edit2, Trash2, Loader2, Shuffle, Phone } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Edit2, Loader2, Phone, Plus, Search, Shuffle, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/formatters";
-import { z } from "zod";
-import { useForm, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+import {
+  createSupplier,
+  deleteSupplier,
+  getEnumOptions,
+  getSuppliersPage,
+  updateSupplier,
+} from "@/lib/backend";
 
 const AVATAR_COLORS = [
   "#6366f1", "#8b5cf6", "#a855f7", "#ec4899", "#f43f5e",
@@ -29,28 +31,23 @@ const UF_LIST = [
   "RS","RO","RR","SC","SP","SE","TO",
 ];
 
-const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
-  ativo:    { label: "Ativo",    cls: "bg-emerald-500/20 text-emerald-400 border-0" },
-  inativo:  { label: "Inativo",  cls: "bg-zinc-500/20 text-zinc-400 border-0" },
-  pendente: { label: "Pendente", cls: "bg-amber-500/20 text-amber-400 border-0" },
-};
-
-function getInitials(name: string): string {
+function getInitials(name: string) {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "??";
   if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
-  return (words[0][0] + words[1][0]).toUpperCase();
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
 }
 
-function randomColor(): string {
+function randomColor() {
   return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
 }
 
 function SupplierAvatar({ name, color, size = "md" }: { name: string; color: string; size?: "sm" | "md" | "lg" }) {
-  const sizeClass = size === "sm" ? "w-9 h-9 text-sm" : size === "lg" ? "w-16 h-16 text-2xl" : "w-10 h-10 text-sm";
+  const sizeClass = size === "sm" ? "h-9 w-9 text-sm" : size === "lg" ? "h-16 w-16 text-2xl" : "h-10 w-10 text-sm";
+
   return (
     <div
-      className={`${sizeClass} rounded-full flex items-center justify-center font-bold flex-shrink-0 select-none`}
+      className={`${sizeClass} flex flex-shrink-0 select-none items-center justify-center rounded-full font-bold`}
       style={{ backgroundColor: `${color}25`, color, border: `2px solid ${color}40` }}
     >
       {getInitials(name || "?")}
@@ -66,42 +63,22 @@ function WhatsAppIcon({ className }: { className?: string }) {
   );
 }
 
-async function apiGet(path: string, params?: Record<string, any>) {
-  const url = new URL(`${window.location.origin}${BASE}/api${path}`);
-  if (params) Object.entries(params).forEach(([k, v]) => v != null && url.searchParams.set(k, String(v)));
-  const r = await fetch(url.toString(), { credentials: "include" });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-async function apiMutate(method: string, path: string, body?: any) {
-  const r = await fetch(`${window.location.origin}${BASE}/api${path}`, {
-    method, credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-const formSchema = z.object({
-  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  razaoSocial: z.string().optional(),
-  cpfCnpj: z.string().optional(),
-  vendedor: z.string().min(1, "Vendedor é obrigatório"),
-  telefone: z.string().min(1, "Telefone é obrigatório"),
-  email: z.string().email("E-mail inválido").optional().or(z.literal("")),
-  minPurchaseValue: z.coerce.number().min(0),
-  status: z.enum(["ativo", "inativo", "pendente"]),
-  cidade: z.string().min(1, "Cidade é obrigatória"),
-  uf: z.string().min(2, "UF é obrigatória"),
-  avatarColor: z.string(),
-});
-
-type FormValues = z.infer<typeof formSchema>;
+type SupplierForm = {
+  name: string;
+  corporateName: string;
+  document: string;
+  salesRepresentative: string;
+  phone: string;
+  email: string;
+  minimumPurchaseValue: number;
+  status: string;
+  city: string;
+  state: string;
+  avatarColor: string;
+};
 
 export default function Suppliers() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const [search, setSearch] = useState("");
@@ -110,144 +87,190 @@ export default function Suppliers() {
   const [limit, setLimit] = useState(20);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const params = {
-    search: search || undefined,
-    status: statusFilter !== "all" ? statusFilter : undefined,
-    page, limit,
-  };
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["suppliers", params],
-    queryFn: () => apiGet("/suppliers", params),
+  const [form, setForm] = useState<SupplierForm>({
+    name: "",
+    corporateName: "",
+    document: "",
+    salesRepresentative: "",
+    phone: "",
+    email: "",
+    minimumPurchaseValue: 0,
+    status: "",
+    city: "",
+    state: "",
+    avatarColor: randomColor(),
   });
 
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: "", razaoSocial: "", cpfCnpj: "", vendedor: "",
-      telefone: "", email: "", minPurchaseValue: 0,
-      status: "ativo", cidade: "", uf: "", avatarColor: randomColor(),
-    },
+  const { data: statusOptions = [] } = useQuery({
+    queryKey: ["supplier-status-options"],
+    queryFn: () => getEnumOptions("/Suppliers/enums/supplier-status"),
   });
 
-  const watchedName = form.watch("name");
-  const watchedColor = form.watch("avatarColor");
+  const statusLabelById = useMemo(
+    () => Object.fromEntries(statusOptions.map((item) => [item.id, item.name])),
+    [statusOptions],
+  );
 
-  const createMutation = useMutation({
-    mutationFn: (data: any) => apiMutate("POST", "/suppliers", data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["suppliers"] });
-      toast({ title: "Fornecedor cadastrado." });
-      handleClose();
-    },
-    onError: (err: any) => toast({ title: "Erro ao cadastrar", description: err.message, variant: "destructive" }),
+  const { data: suppliersPage, isLoading } = useQuery({
+    queryKey: ["suppliers-page", { search, page, limit }],
+    queryFn: () => getSuppliersPage({ search, page, limit }),
   });
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: any) => apiMutate("PUT", `/suppliers/${id}`, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["suppliers"] });
-      toast({ title: "Fornecedor atualizado." });
-      handleClose();
-    },
-    onError: (err: any) => toast({ title: "Erro ao atualizar", description: err.message, variant: "destructive" }),
-  });
+  const suppliers = useMemo(() => {
+    if (statusFilter === "all") return suppliersPage?.data ?? [];
+    return (suppliersPage?.data ?? []).filter((item) => String(item.status) === statusFilter);
+  }, [statusFilter, suppliersPage?.data]);
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => apiMutate("DELETE", `/suppliers/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["suppliers"] });
-      toast({ title: "Fornecedor removido." });
-    },
-  });
+  function whatsappUrl(phone: string) {
+    const digits = phone.replace(/\D/g, "");
+    const number = digits.startsWith("55") ? digits : `55${digits}`;
+    return `https://wa.me/${number}`;
+  }
 
-  const handleOpen = (supplier?: any) => {
+  function openModal(supplier?: any) {
     if (supplier) {
       setEditingId(supplier.id);
-      form.reset({
+      setForm({
         name: supplier.name,
-        razaoSocial: supplier.razaoSocial || "",
-        cpfCnpj: supplier.cpfCnpj || "",
-        vendedor: supplier.vendedor,
-        telefone: supplier.telefone,
+        corporateName: supplier.corporateName || "",
+        document: supplier.document || "",
+        salesRepresentative: supplier.salesRepresentative,
+        phone: supplier.phone,
         email: supplier.email || "",
-        minPurchaseValue: Number(supplier.minPurchaseValue),
-        status: supplier.status,
-        cidade: supplier.cidade,
-        uf: supplier.uf,
+        minimumPurchaseValue: supplier.minimumPurchaseValue,
+        status: String(supplier.status),
+        city: supplier.city,
+        state: supplier.state,
         avatarColor: supplier.avatarColor,
       });
     } else {
       setEditingId(null);
-      form.reset({
-        name: "", razaoSocial: "", cpfCnpj: "", vendedor: "",
-        telefone: "", email: "", minPurchaseValue: 0,
-        status: "ativo", cidade: "", uf: "", avatarColor: randomColor(),
+      setForm({
+        name: "",
+        corporateName: "",
+        document: "",
+        salesRepresentative: "",
+        phone: "",
+        email: "",
+        minimumPurchaseValue: 0,
+        status: statusOptions.find((item) => item.allowSelect)?.id.toString() ?? "",
+        city: "",
+        state: "",
+        avatarColor: randomColor(),
       });
     }
+
     setModalOpen(true);
-  };
+  }
 
-  const handleClose = () => {
-    setModalOpen(false);
-    setEditingId(null);
-    form.reset();
-  };
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
 
-  const onSubmit = (values: FormValues) => {
-    const payload = { ...values, email: values.email || null, razaoSocial: values.razaoSocial || null, cpfCnpj: values.cpfCnpj || null };
-    if (editingId) updateMutation.mutate({ id: editingId, data: payload });
-    else createMutation.mutate(payload);
-  };
+    try {
+      const payload = {
+        name: form.name.trim(),
+        corporateName: form.corporateName.trim() || null,
+        document: form.document.trim() || null,
+        salesRepresentative: form.salesRepresentative.trim(),
+        phone: form.phone.trim(),
+        email: form.email.trim() || null,
+        minimumPurchaseValue: form.minimumPurchaseValue,
+        status: Number(form.status),
+        city: form.city.trim(),
+        state: form.state,
+        avatarColor: form.avatarColor,
+      };
 
-  const whatsappUrl = (telefone: string) => {
-    const digits = telefone.replace(/\D/g, "");
-    const number = digits.startsWith("55") ? digits : `55${digits}`;
-    return `https://wa.me/${number}`;
-  };
+      if (editingId) {
+        await updateSupplier({
+          id: editingId,
+          ...payload,
+        });
+        toast({ title: "Fornecedor atualizado." });
+      } else {
+        await createSupplier(payload);
+        toast({ title: "Fornecedor cadastrado." });
+      }
 
-  const totalPages = Math.max(1, Math.ceil((data?.total || 0) / limit));
-  const isPending = createMutation.isPending || updateMutation.isPending;
+      queryClient.invalidateQueries({ queryKey: ["suppliers-page"] });
+      setModalOpen(false);
+    } catch (error) {
+      toast({
+        title: "Erro ao salvar fornecedor",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    try {
+      await deleteSupplier(id);
+      queryClient.invalidateQueries({ queryKey: ["suppliers-page"] });
+      toast({ title: "Fornecedor removido." });
+    } catch (error) {
+      toast({
+        title: "Erro ao remover fornecedor",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil((suppliersPage?.total || 0) / limit));
 
   return (
     <AppLayout>
       <div className="flex flex-col gap-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-display font-bold text-foreground">Fornecedores</h1>
-            <p className="text-muted-foreground mt-1">Gerencie seus fornecedores e contatos comerciais.</p>
+            <p className="mt-1 text-muted-foreground">Gerencie seus fornecedores e contatos comerciais.</p>
           </div>
-          <Button onClick={() => handleOpen()} className="hover-elevate bg-primary text-primary-foreground">
-            <Plus className="w-4 h-4 mr-2" /> Novo Fornecedor
+          <Button onClick={() => openModal()} className="bg-primary text-primary-foreground hover-elevate">
+            <Plus className="mr-2 h-4 w-4" /> Novo Fornecedor
           </Button>
         </div>
 
-        <div className="bg-card rounded-2xl border border-border/50 shadow-lg shadow-black/5 overflow-hidden">
-          <div className="p-4 border-b border-border/50 flex flex-col sm:flex-row gap-3">
+        <div className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-lg shadow-black/5">
+          <div className="flex flex-col gap-3 border-b border-border/50 p-4 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar por nome..."
                 value={search}
-                onChange={e => { setSearch(e.target.value); setPage(1); }}
-                className="pl-9 bg-background"
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+                className="bg-background pl-9"
               />
             </div>
-            <Select value={statusFilter} onValueChange={v => { setStatusFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-40 bg-background"><SelectValue /></SelectTrigger>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-44 bg-background">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos os status</SelectItem>
-                <SelectItem value="ativo">Ativo</SelectItem>
-                <SelectItem value="inativo">Inativo</SelectItem>
-                <SelectItem value="pendente">Pendente</SelectItem>
+                {statusOptions
+                  .filter((item) => item.allowSelect)
+                  .map((item) => (
+                    <SelectItem key={item.id} value={String(item.id)}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-muted-foreground uppercase bg-muted/30">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-muted/30 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-6 py-4">Fornecedor</th>
                   <th className="px-6 py-4">Vendedor</th>
@@ -261,221 +284,234 @@ export default function Suppliers() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={8} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></td></tr>
-                ) : !data?.data?.length ? (
-                  <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">Nenhum fornecedor encontrado.</td></tr>
-                ) : data.data.map((s: any) => (
-                  <tr key={s.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <SupplierAvatar name={s.name} color={s.avatarColor} size="sm" />
-                        <div>
-                          <p className="font-medium text-foreground leading-tight">{s.name}</p>
-                          {s.razaoSocial && <p className="text-xs text-muted-foreground mt-0.5">{s.razaoSocial}</p>}
-                          {s.cpfCnpj && <p className="text-xs text-muted-foreground/70 font-mono mt-0.5">{s.cpfCnpj}</p>}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-muted-foreground">{s.vendedor}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm">{s.telefone}</span>
-                          <a
-                            href={whatsappUrl(s.telefone)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Abrir conversa no WhatsApp"
-                            className="text-[#25d366] hover:text-[#128c7e] transition-colors"
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <WhatsAppIcon className="w-4 h-4" />
-                          </a>
-                        </div>
-                        {s.email && <span className="text-xs text-muted-foreground truncate max-w-[180px]">{s.email}</span>}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-muted-foreground">{s.cidade}/{s.uf}</td>
-                    <td className="px-6 py-4 font-medium text-primary">{formatCurrency(s.minPurchaseValue)}</td>
-                    <td className="px-6 py-4">
-                      <Badge className={STATUS_LABELS[s.status]?.cls}>
-                        {STATUS_LABELS[s.status]?.label || s.status}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-4 text-muted-foreground text-xs">
-                      {new Date(s.createdAt).toLocaleDateString("pt-BR")}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-primary hover-elevate" onClick={() => handleOpen(s)}>
-                          <Edit2 className="w-4 h-4" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate" onClick={() => {
-                          if (confirm(`Remover o fornecedor "${s.name}"?`)) deleteMutation.mutate(s.id);
-                        }}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center">
+                      <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
                     </td>
                   </tr>
-                ))}
+                ) : suppliers.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-muted-foreground">
+                      Nenhum fornecedor encontrado.
+                    </td>
+                  </tr>
+                ) : (
+                  suppliers.map((supplier) => (
+                    <tr key={supplier.id} className="border-b border-border/50 transition-colors hover:bg-muted/20">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <SupplierAvatar name={supplier.name} color={supplier.avatarColor} size="sm" />
+                          <div>
+                            <p className="leading-tight font-medium text-foreground">{supplier.name}</p>
+                            {supplier.corporateName && <p className="mt-0.5 text-xs text-muted-foreground">{supplier.corporateName}</p>}
+                            {supplier.document && <p className="mt-0.5 font-mono text-xs text-muted-foreground/70">{supplier.document}</p>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-muted-foreground">{supplier.salesRepresentative}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm">{supplier.phone}</span>
+                            <a
+                              href={whatsappUrl(supplier.phone)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#25d366] transition-colors hover:text-[#128c7e]"
+                              title="Abrir conversa no WhatsApp"
+                            >
+                              <WhatsAppIcon className="h-4 w-4" />
+                            </a>
+                          </div>
+                          {supplier.email && <span className="max-w-[180px] truncate text-xs text-muted-foreground">{supplier.email}</span>}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-muted-foreground">{supplier.city}/{supplier.state}</td>
+                      <td className="px-6 py-4 font-medium text-primary">{formatCurrency(supplier.minimumPurchaseValue)}</td>
+                      <td className="px-6 py-4">
+                        <Badge className="border-0 bg-emerald-500/20 text-emerald-400">
+                          {statusLabelById[supplier.status] ?? supplier.status}
+                        </Badge>
+                      </td>
+                      <td className="px-6 py-4 text-xs text-muted-foreground">
+                        {new Date(supplier.createdAt).toLocaleDateString("pt-BR")}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary hover-elevate"
+                            onClick={() => openModal(supplier)}
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate"
+                            onClick={() => {
+                              if (confirm(`Remover o fornecedor "${supplier.name}"?`)) {
+                                void handleDelete(supplier.id);
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
 
-          <div className="p-4 border-t border-border/50 flex items-center justify-between text-sm text-muted-foreground">
+          <div className="flex items-center justify-between border-t border-border/50 p-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <span>Itens por página:</span>
-              <Select value={String(limit)} onValueChange={v => { setLimit(Number(v)); setPage(1); }}>
-                <SelectTrigger className="h-8 w-20 bg-background text-xs"><SelectValue /></SelectTrigger>
+              <Select
+                value={String(limit)}
+                onValueChange={(value) => {
+                  setLimit(Number(value));
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-20 bg-background text-xs">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="20">20</SelectItem>
                   <SelectItem value="50">50</SelectItem>
                   <SelectItem value="100">100</SelectItem>
                 </SelectContent>
               </Select>
-              <span className="ml-2">Total: {data?.total || 0}</span>
+              <span className="ml-2">Total: {suppliersPage?.total || 0}</span>
             </div>
-            <div className="flex gap-2 items-center">
-              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</Button>
-              <span className="text-xs px-2">{page} / {totalPages}</span>
-              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Próxima</Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>
+                Anterior
+              </Button>
+              <span className="px-2 text-xs">{page} / {totalPages}</span>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)}>
+                Próxima
+              </Button>
             </div>
           </div>
         </div>
       </div>
 
-      <Dialog open={modalOpen} onOpenChange={open => { if (!open) handleClose(); }}>
-        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto bg-card border-border/50">
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-border/50 bg-card sm:max-w-[700px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-display">{editingId ? "Editar Fornecedor" : "Novo Fornecedor"}</DialogTitle>
+            <DialogTitle className="text-xl font-display">
+              {editingId ? "Editar Fornecedor" : "Novo Fornecedor"}
+            </DialogTitle>
           </DialogHeader>
 
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 py-2">
-
-            {/* Avatar preview */}
-            <div className="flex items-center gap-4 p-4 bg-background/50 border border-border/30 rounded-xl">
-              <SupplierAvatar name={watchedName || "?"} color={watchedColor} size="lg" />
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-foreground truncate">{watchedName || "Nome do fornecedor"}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Ícone gerado pelas iniciais do nome</p>
+          <form onSubmit={handleSubmit} className="space-y-5 py-2">
+            <div className="flex items-center gap-4 rounded-xl border border-border/30 bg-background/50 p-4">
+              <SupplierAvatar name={form.name || "?"} color={form.avatarColor} size="lg" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-foreground">{form.name || "Nome do fornecedor"}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Ícone gerado pelas iniciais do nome</p>
               </div>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-8 text-xs gap-1.5 flex-shrink-0"
-                onClick={() => form.setValue("avatarColor", randomColor())}
-                title="Sortear nova cor"
+                className="h-8 flex-shrink-0 gap-1.5 text-xs"
+                onClick={() => setForm((current) => ({ ...current, avatarColor: randomColor() }))}
               >
-                <Shuffle className="w-3.5 h-3.5" />
+                <Shuffle className="h-3.5 w-3.5" />
                 Sortear cor
               </Button>
             </div>
 
-            {/* Campos em grade */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Nome <span className="text-destructive">*</span></Label>
-                <Input {...form.register("name")} className="bg-background" placeholder="Nome do fornecedor" />
-                {form.formState.errors.name && <p className="text-xs text-destructive">{form.formState.errors.name.message}</p>}
+                <Label>Nome</Label>
+                <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="bg-background" />
               </div>
-
               <div className="space-y-1.5">
                 <Label>Razão Social</Label>
-                <Input {...form.register("razaoSocial")} className="bg-background" placeholder="Razão social (opcional)" />
+                <Input value={form.corporateName} onChange={(event) => setForm((current) => ({ ...current, corporateName: event.target.value }))} className="bg-background" />
               </div>
-
               <div className="space-y-1.5">
                 <Label>CPF / CNPJ</Label>
-                <Input {...form.register("cpfCnpj")} className="bg-background font-mono" placeholder="000.000.000-00 ou 00.000.000/0000-00" />
+                <Input value={form.document} onChange={(event) => setForm((current) => ({ ...current, document: event.target.value }))} className="bg-background font-mono" />
               </div>
-
               <div className="space-y-1.5">
-                <Label>Vendedor <span className="text-destructive">*</span></Label>
-                <Input {...form.register("vendedor")} className="bg-background" placeholder="Nome do vendedor/contato" />
-                {form.formState.errors.vendedor && <p className="text-xs text-destructive">{form.formState.errors.vendedor.message}</p>}
+                <Label>Vendedor</Label>
+                <Input value={form.salesRepresentative} onChange={(event) => setForm((current) => ({ ...current, salesRepresentative: event.target.value }))} className="bg-background" />
               </div>
-
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5" /> Telefone <span className="text-destructive">*</span>
+                  <Phone className="h-3.5 w-3.5" /> Telefone
                 </Label>
-                <div className="relative">
-                  <Input {...form.register("telefone")} className="bg-background pr-10" placeholder="(11) 99999-9999" />
-                  {form.watch("telefone") && (
-                    <a
-                      href={whatsappUrl(form.watch("telefone"))}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#25d366] hover:text-[#128c7e] transition-colors"
-                      title="Abrir no WhatsApp"
-                    >
-                      <WhatsAppIcon className="w-5 h-5" />
-                    </a>
-                  )}
-                </div>
-                {form.formState.errors.telefone && <p className="text-xs text-destructive">{form.formState.errors.telefone.message}</p>}
+                <Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className="bg-background" />
               </div>
-
               <div className="space-y-1.5">
-                <Label>E-mail</Label>
-                <Input {...form.register("email")} type="email" className="bg-background" placeholder="contato@fornecedor.com.br" />
-                {form.formState.errors.email && <p className="text-xs text-destructive">{form.formState.errors.email.message}</p>}
+                <Label>Email</Label>
+                <Input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="bg-background" />
               </div>
-
               <div className="space-y-1.5">
-                <Label>Valor Mínimo de Compra (R$) <span className="text-destructive">*</span></Label>
-                <Input type="number" step="0.01" min="0" {...form.register("minPurchaseValue")} className="bg-background" placeholder="0,00" />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Status <span className="text-destructive">*</span></Label>
-                <Controller
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ativo">Ativo</SelectItem>
-                        <SelectItem value="inativo">Inativo</SelectItem>
-                        <SelectItem value="pendente">Pendente</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
+                <Label>Valor Mínimo de Compra (R$)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.minimumPurchaseValue}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, minimumPurchaseValue: Number(event.target.value) }))
+                  }
+                  className="bg-background"
                 />
               </div>
-
               <div className="space-y-1.5">
-                <Label>Cidade <span className="text-destructive">*</span></Label>
-                <Input {...form.register("cidade")} className="bg-background" placeholder="Nome da cidade" />
-                {form.formState.errors.cidade && <p className="text-xs text-destructive">{form.formState.errors.cidade.message}</p>}
+                <Label>Status</Label>
+                <Select value={form.status} onValueChange={(value) => setForm((current) => ({ ...current, status: value }))}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statusOptions
+                      .filter((item) => item.allowSelect)
+                      .map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
               </div>
-
               <div className="space-y-1.5">
-                <Label>UF <span className="text-destructive">*</span></Label>
-                <Controller
-                  control={form.control}
-                  name="uf"
-                  render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger className="bg-background"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                      <SelectContent>
-                        {UF_LIST.map(uf => <SelectItem key={uf} value={uf}>{uf}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-                {form.formState.errors.uf && <p className="text-xs text-destructive">{form.formState.errors.uf.message}</p>}
+                <Label>Cidade</Label>
+                <Input value={form.city} onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))} className="bg-background" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>UF</Label>
+                <Select value={form.state} onValueChange={(value) => setForm((current) => ({ ...current, state: value }))}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {UF_LIST.map((uf) => (
+                      <SelectItem key={uf} value={uf}>
+                        {uf}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
             <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={handleClose}>Cancelar</Button>
-              <Button type="submit" disabled={isPending} className="bg-primary text-primary-foreground hover-elevate">
-                {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar"}
+              <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={saving} className="bg-primary text-primary-foreground hover-elevate">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salvar"}
               </Button>
             </DialogFooter>
           </form>

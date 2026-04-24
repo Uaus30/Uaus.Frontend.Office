@@ -1,146 +1,266 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useGetSales, getGetSalesQueryKey } from "@workspace/api-client-react";
 import { AppLayout } from "@/components/layout";
-import { 
-  useGetSales, 
-  useCreateSale, 
-  useDeleteSale,
-  useGetCustomers,
-  useGetProducts,
-  getGetSalesQueryKey
-} from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { Plus, Trash2, Loader2, Receipt, Search, Eye, X } from "lucide-react";
+import { Eye, Loader2, Plus, Receipt, Trash2, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-const paymentMethods = [
-  { value: "cash", label: "Dinheiro" },
-  { value: "credit_card", label: "Cartão de Crédito" },
-  { value: "debit_card", label: "Cartão de Débito" },
-  { value: "pix", label: "PIX" },
-  { value: "transfer", label: "Transferência" },
-];
+import {
+  buildEnrichedSales,
+  buildProductCollections,
+  createSaleWithItems,
+  deleteSaleWithItems,
+  getAllCategories,
+  getAllCustomers,
+  getAllDepartments,
+  getAllImages,
+  getAllProductGroups,
+  getAllProductImages,
+  getAllProducts,
+  getAllProductTags,
+  getAllSaleItems,
+  getAllTags,
+  getEnumOptions,
+} from "@/lib/backend";
 
 export default function Sales() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  
+
   const [page, setPage] = useState(1);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [viewSaleId, setViewSaleId] = useState<any>(null);
+  const [viewSaleId, setViewSaleId] = useState<number | null>(null);
 
   const { data: salesPage, isLoading } = useGetSales({ page, limit: 15 });
-  const { data: customersPage } = useGetCustomers({ limit: 100 });
-  const { data: productsPage } = useGetProducts({ limit: 100 });
 
-  const { mutate: createSale, isPending: isCreating } = useCreateSale({
-    mutation: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetSalesQueryKey() });
-        toast({ title: "Sucesso", description: "Venda registrada com sucesso." });
-        setCreateModalOpen(false);
-        resetSaleForm();
-      },
-      onError: (err: any) => {
-        toast({ title: "Erro", description: err.message || "Erro ao registrar venda.", variant: "destructive" });
-      }
-    }
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers-all-for-sales"],
+    queryFn: () => getAllCustomers(),
   });
 
-  const { mutate: deleteSale } = useDeleteSale({
-    mutation: {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetSalesQueryKey() });
-        toast({ title: "Removida", description: "Venda cancelada/removida." });
-      }
-    }
+  const { data: paymentMethods = [] } = useQuery({
+    queryKey: ["payment-method-options"],
+    queryFn: () => getEnumOptions("/Sales/enums/payment-method"),
   });
 
-  // Create Sale Form State
+  const { data: paymentStatuses = [] } = useQuery({
+    queryKey: ["payment-status-options"],
+    queryFn: () => getEnumOptions("/Sales/enums/payment-status"),
+  });
+
+  const { data: enrichedProducts = [] } = useQuery({
+    queryKey: ["products-enriched-for-sales"],
+    queryFn: async () => {
+      const [products, productGroups, categories, departments, tags, productTags, images, productImages] =
+        await Promise.all([
+          getAllProducts(),
+          getAllProductGroups(),
+          getAllCategories(),
+          getAllDepartments(),
+          getAllTags(),
+          getAllProductTags(),
+          getAllImages(),
+          getAllProductImages(),
+        ]);
+
+      return buildProductCollections({
+        products,
+        productGroups,
+        categories,
+        departments,
+        tags,
+        productTags,
+        images,
+        productImages,
+      }).enrichedProducts;
+    },
+  });
+
+  const { data: saleItems = [] } = useQuery({
+    queryKey: ["sale-items-all-for-sales"],
+    queryFn: () => getAllSaleItems(),
+  });
+
+  const paymentMethodById = useMemo(
+    () => Object.fromEntries(paymentMethods.map((item) => [item.id, item.name])),
+    [paymentMethods],
+  );
+
+  const saleDetails = useMemo(() => {
+    if (!salesPage) return [];
+    return buildEnrichedSales({
+      sales: salesPage.data,
+      saleItems,
+      customers,
+      enrichedProducts,
+    });
+  }, [customers, enrichedProducts, saleItems, salesPage]);
+
   const [customerId, setCustomerId] = useState<number | null>(null);
-  const [items, setItems] = useState<Array<{productId: number, quantity: number, unitPrice: number, product?: any}>>([]);
-  const [discount, setDiscount] = useState<number>(0);
-  const [paymentMethod, setPaymentMethod] = useState<any>("pix");
+  const [items, setItems] = useState<Array<{ productId: number; quantity: number; unitPrice: number }>>([]);
+  const [discount, setDiscount] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState("");
   const [notes, setNotes] = useState("");
-
-  // Select Item temporary state
   const [selectedProductId, setSelectedProductId] = useState<number | "">("");
-  const [selectedQty, setSelectedQty] = useState<number>(1);
+  const [selectedQty, setSelectedQty] = useState(1);
+  const [savingSale, setSavingSale] = useState(false);
+  const [deletingSaleId, setDeletingSaleId] = useState<number | null>(null);
 
-  const resetSaleForm = () => {
+  const availableProducts = useMemo(
+    () => enrichedProducts.filter((product) => product.stock > 0 && product.status !== 4),
+    [enrichedProducts],
+  );
+
+  function resetSaleForm() {
     setCustomerId(null);
     setItems([]);
     setDiscount(0);
-    setPaymentMethod("pix");
+    setPaymentMethod(
+      paymentMethods.find((item) => item.allowSelect)?.id.toString() ?? "",
+    );
+    setPaymentStatus(
+      paymentStatuses.find((item) => item.allowSelect)?.id.toString() ?? "",
+    );
     setNotes("");
     setSelectedProductId("");
     setSelectedQty(1);
-  };
+  }
 
-  const addItem = () => {
+  function addItem() {
     if (!selectedProductId || selectedQty <= 0) return;
-    const prod = productsPage?.data.find(p => p.id === Number(selectedProductId));
-    if (!prod) return;
-    
-    setItems(prev => {
-      const existing = prev.find(i => i.productId === prod.id);
+
+    const product = availableProducts.find((item) => item.id === Number(selectedProductId));
+    if (!product) return;
+
+    setItems((current) => {
+      const existing = current.find((item) => item.productId === product.id);
       if (existing) {
-        return prev.map(i => i.productId === prod.id ? { ...i, quantity: i.quantity + selectedQty } : i);
+        return current.map((item) =>
+          item.productId === product.id
+            ? { ...item, quantity: item.quantity + selectedQty }
+            : item,
+        );
       }
-      return [...prev, { productId: prod.id, quantity: selectedQty, unitPrice: prod.price, product: prod }];
+
+      return [
+        ...current,
+        {
+          productId: product.id,
+          quantity: selectedQty,
+          unitPrice: product.price,
+        },
+      ];
     });
+
     setSelectedProductId("");
     setSelectedQty(1);
-  };
+  }
 
-  const removeItem = (pid: number) => {
-    setItems(prev => prev.filter(i => i.productId !== pid));
-  };
+  function removeItem(productId: number) {
+    setItems((current) => current.filter((item) => item.productId !== productId));
+  }
 
-  const subtotal = items.reduce((acc, i) => acc + (i.quantity * i.unitPrice), 0);
+  const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const total = Math.max(0, subtotal - discount);
+  const saleToView = saleDetails.find((sale) => sale.id === viewSaleId) ?? null;
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  async function handleCreateSubmit(event: React.FormEvent) {
+    event.preventDefault();
+
     if (items.length === 0) {
-      toast({ title: "Atenção", description: "Adicione pelo menos um item à venda.", variant: "destructive" });
+      toast({
+        title: "Adicione pelo menos um item à venda.",
+        variant: "destructive",
+      });
       return;
     }
-    createSale({
-      data: {
-        customerId,
-        items: items.map(({productId, quantity, unitPrice}) => ({productId, quantity, unitPrice})),
-        discount,
-        paymentMethod,
-        notes: notes || undefined
-      }
-    });
-  };
 
-  const saleToView = viewSaleId ? salesPage?.data.find(s => s.id === viewSaleId) : null;
+    if (!paymentMethod || !paymentStatus) {
+      toast({
+        title: "Selecione o método e o status do pagamento.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSavingSale(true);
+    try {
+      await createSaleWithItems({
+        customerId,
+        discount,
+        paymentMethod: Number(paymentMethod),
+        paymentStatus: Number(paymentStatus),
+        notes,
+        items,
+      });
+
+      queryClient.invalidateQueries({ queryKey: getGetSalesQueryKey() });
+      queryClient.invalidateQueries({ queryKey: ["sale-items-all-for-sales"] });
+      queryClient.invalidateQueries({ queryKey: ["customers-all-for-sales"] });
+      queryClient.invalidateQueries({ queryKey: ["products-enriched-for-sales"] });
+
+      toast({ title: "Venda registrada com sucesso." });
+      setCreateModalOpen(false);
+      resetSaleForm();
+    } catch (error) {
+      toast({
+        title: "Erro ao registrar venda",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingSale(false);
+    }
+  }
+
+  async function handleDeleteSale(saleId: number) {
+    setDeletingSaleId(saleId);
+
+    try {
+      await deleteSaleWithItems(saleId);
+      queryClient.invalidateQueries({ queryKey: getGetSalesQueryKey() });
+      queryClient.invalidateQueries({ queryKey: ["sale-items-all-for-sales"] });
+      toast({ title: "Venda removida." });
+    } catch (error) {
+      toast({
+        title: "Erro ao remover venda",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingSaleId(null);
+    }
+  }
 
   return (
     <AppLayout>
       <div className="flex flex-col gap-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-display font-bold text-foreground">Vendas</h1>
-            <p className="text-muted-foreground mt-1">Histórico e registro de faturamento.</p>
+            <p className="mt-1 text-muted-foreground">Histórico e registro de faturamento.</p>
           </div>
-          <Button onClick={() => setCreateModalOpen(true)} className="hover-elevate bg-primary text-primary-foreground">
-            <Plus className="w-4 h-4 mr-2" /> Nova Venda
+          <Button
+            onClick={() => {
+              resetSaleForm();
+              setCreateModalOpen(true);
+            }}
+            className="bg-primary text-primary-foreground hover-elevate"
+          >
+            <Plus className="mr-2 h-4 w-4" /> Nova Venda
           </Button>
         </div>
 
-        <div className="bg-card rounded-2xl border border-border/50 shadow-lg shadow-black/5 overflow-hidden">
+        <div className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-lg shadow-black/5">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-muted-foreground uppercase bg-muted/30">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-muted/30 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-6 py-4">ID</th>
                   <th className="px-6 py-4">Data</th>
@@ -152,27 +272,51 @@ export default function Sales() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={6} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></td></tr>
-                ) : salesPage?.data.map((sale) => (
-                  <tr key={sale.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                    <td className="px-6 py-4 font-mono font-medium text-muted-foreground">#{sale.id.toString().padStart(4, '0')}</td>
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center">
+                      <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                    </td>
+                  </tr>
+                ) : saleDetails.map((sale) => (
+                  <tr key={sale.id} className="border-b border-border/50 transition-colors hover:bg-muted/20">
+                    <td className="px-6 py-4 font-mono font-medium text-muted-foreground">
+                      #{sale.id.toString().padStart(4, "0")}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">{formatDate(sale.createdAt)}</td>
-                    <td className="px-6 py-4 font-medium">{sale.customer?.name || <span className="text-muted-foreground">Consumidor Final</span>}</td>
+                    <td className="px-6 py-4 font-medium">
+                      {sale.customer?.name || <span className="text-muted-foreground">Consumidor Final</span>}
+                    </td>
                     <td className="px-6 py-4">
-                      <Badge variant="outline" className="font-normal border-border/50">
-                        {paymentMethods.find(p => p.value === sale.paymentMethod)?.label || sale.paymentMethod}
+                      <Badge variant="outline" className="border-border/50 font-normal">
+                        {paymentMethodById[sale.paymentMethod] ?? sale.paymentMethod}
                       </Badge>
                     </td>
                     <td className="px-6 py-4 font-medium text-primary">{formatCurrency(sale.total)}</td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-primary hover-elevate" onClick={() => setViewSaleId(sale.id)}>
-                          <Eye className="w-4 h-4" />
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-muted-foreground hover:text-primary hover-elevate"
+                          onClick={() => setViewSaleId(sale.id)}
+                        >
+                          <Eye className="h-4 w-4" />
                         </Button>
-                        <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate" onClick={() => {
-                          if (confirm("Tem certeza que deseja estornar/cancelar esta venda? O estoque não será revertido automaticamente.")) deleteSale({ id: sale.id });
-                        }}>
-                          <Trash2 className="w-4 h-4" />
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate"
+                          onClick={() => {
+                            if (confirm("Remover esta venda e seus itens?")) {
+                              void handleDeleteSale(sale.id);
+                            }
+                          }}
+                        >
+                          {deletingSaleId === sale.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
                         </Button>
                       </div>
                     </td>
@@ -181,85 +325,134 @@ export default function Sales() {
               </tbody>
             </table>
           </div>
-          
-          <div className="p-4 border-t border-border/50 flex items-center justify-between text-sm text-muted-foreground">
-            <span>Mostrando página {salesPage?.page} de {Math.ceil((salesPage?.total || 0) / (salesPage?.limit || 15)) || 1}</span>
+
+          <div className="flex items-center justify-between border-t border-border/50 p-4 text-sm text-muted-foreground">
+            <span>
+              Mostrando página {salesPage?.page} de{" "}
+              {Math.ceil((salesPage?.total || 0) / (salesPage?.limit || 15)) || 1}
+            </span>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</Button>
-              <Button variant="outline" size="sm" disabled={salesPage && salesPage.data.length < salesPage.limit} onClick={() => setPage(p => p + 1)}>Próxima</Button>
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={salesPage ? salesPage.data.length < salesPage.limit : true}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                Próxima
+              </Button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* CREATE SALE MODAL */}
-      <Dialog open={createModalOpen} onOpenChange={(open) => {
-        if (!open) resetSaleForm();
-        setCreateModalOpen(open);
-      }}>
-        <DialogContent className="sm:max-w-[700px] bg-card border-border/50 flex flex-col max-h-[90vh]">
+      <Dialog
+        open={createModalOpen}
+        onOpenChange={(open) => {
+          if (!open) resetSaleForm();
+          setCreateModalOpen(open);
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] flex-col border-border/50 bg-card sm:max-w-[700px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-display flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-primary" /> Registrar Nova Venda
+            <DialogTitle className="flex items-center gap-2 text-xl font-display">
+              <Receipt className="h-5 w-5 text-primary" /> Registrar Nova Venda
             </DialogTitle>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto pr-2 py-4 space-y-6">
+          <div className="flex-1 space-y-6 overflow-y-auto py-4 pr-2">
             <div className="space-y-2">
               <label className="text-sm font-medium">Cliente (Opcional)</label>
-              <Select value={customerId?.toString() || "null"} onValueChange={(val) => setCustomerId(val === "null" ? null : Number(val))}>
-                <SelectTrigger className="bg-background"><SelectValue placeholder="Consumidor Final" /></SelectTrigger>
+              <Select
+                value={customerId?.toString() || "null"}
+                onValueChange={(value) => setCustomerId(value === "null" ? null : Number(value))}
+              >
+                <SelectTrigger className="bg-background">
+                  <SelectValue placeholder="Consumidor Final" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="null">Consumidor Final</SelectItem>
-                  {customersPage?.data.map(c => <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>)}
+                  {customers.map((customer) => (
+                    <SelectItem key={customer.id} value={customer.id.toString()}>
+                      {customer.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="border border-border/50 rounded-xl p-4 bg-background/50 space-y-4">
-              <h4 className="font-semibold text-sm">Itens da Venda</h4>
-              <div className="flex gap-2 items-end">
+            <div className="space-y-4 rounded-xl border border-border/50 bg-background/50 p-4">
+              <h4 className="text-sm font-semibold">Itens da Venda</h4>
+              <div className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
                   <label className="text-xs text-muted-foreground">Produto</label>
-                  <Select value={selectedProductId.toString()} onValueChange={(val) => setSelectedProductId(Number(val))}>
-                    <SelectTrigger className="bg-background"><SelectValue placeholder="Selecione um produto..." /></SelectTrigger>
+                  <Select
+                    value={selectedProductId.toString()}
+                    onValueChange={(value) => setSelectedProductId(Number(value))}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Selecione um produto..." />
+                    </SelectTrigger>
                     <SelectContent>
-                      {productsPage?.data.filter(p => p.active && p.stock > 0).map(p => (
-                        <SelectItem key={p.id} value={p.id.toString()}>{p.name} - {formatCurrency(p.price)} (Estoque: {p.stock})</SelectItem>
+                      {availableProducts.map((product) => (
+                        <SelectItem key={product.id} value={product.id.toString()}>
+                          {product.name} - {formatCurrency(product.price)} (Estoque: {product.stock})
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="w-24 space-y-1">
                   <label className="text-xs text-muted-foreground">Qtd</label>
-                  <Input type="number" min="1" value={selectedQty} onChange={e => setSelectedQty(Number(e.target.value))} className="bg-background" />
+                  <Input
+                    type="number"
+                    min="1"
+                    value={selectedQty}
+                    onChange={(event) => setSelectedQty(Number(event.target.value))}
+                    className="bg-background"
+                  />
                 </div>
-                <Button type="button" onClick={addItem} variant="secondary" className="hover-elevate">Adicionar</Button>
+                <Button type="button" onClick={addItem} variant="secondary" className="hover-elevate">
+                  Adicionar
+                </Button>
               </div>
 
               {items.length > 0 && (
-                <div className="mt-4 border border-border/50 rounded-lg overflow-hidden bg-card">
-                  <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-muted-foreground bg-muted/50 border-b border-border/50">
+                <div className="mt-4 overflow-hidden rounded-lg border border-border/50 bg-card">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-border/50 bg-muted/50 text-xs text-muted-foreground">
                       <tr>
                         <th className="px-3 py-2">Item</th>
                         <th className="px-3 py-2">Qtd</th>
                         <th className="px-3 py-2">Unitário</th>
                         <th className="px-3 py-2 text-right">Subtotal</th>
-                        <th className="px-3 py-2 w-10"></th>
+                        <th className="w-10 px-3 py-2" />
                       </tr>
                     </thead>
                     <tbody>
-                      {items.map(item => (
-                        <tr key={item.productId} className="border-b border-border/50 last:border-0">
-                          <td className="px-3 py-2">{item.product?.name}</td>
-                          <td className="px-3 py-2">{item.quantity}</td>
-                          <td className="px-3 py-2">{formatCurrency(item.unitPrice)}</td>
-                          <td className="px-3 py-2 text-right font-medium">{formatCurrency(item.quantity * item.unitPrice)}</td>
-                          <td className="px-3 py-2 text-center">
-                            <button onClick={() => removeItem(item.productId)} className="text-destructive hover:opacity-70"><X className="w-4 h-4"/></button>
-                          </td>
-                        </tr>
-                      ))}
+                      {items.map((item) => {
+                        const product = availableProducts.find((entry) => entry.id === item.productId);
+                        return (
+                          <tr key={item.productId} className="border-b border-border/50 last:border-0">
+                            <td className="px-3 py-2">{product?.name || `Produto #${item.productId}`}</td>
+                            <td className="px-3 py-2">{item.quantity}</td>
+                            <td className="px-3 py-2">{formatCurrency(item.unitPrice)}</td>
+                            <td className="px-3 py-2 text-right font-medium">
+                              {formatCurrency(item.quantity * item.unitPrice)}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeItem(item.productId)}
+                                className="text-destructive hover:opacity-70"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -269,79 +462,123 @@ export default function Sales() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Método de Pagamento</label>
-                <Select value={paymentMethod} onValueChange={(val) => setPaymentMethod(val)}>
-                  <SelectTrigger className="bg-background"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
                   <SelectContent>
-                    {paymentMethods.map(pm => <SelectItem key={pm.value} value={pm.value}>{pm.label}</SelectItem>)}
+                    {paymentMethods
+                      .filter((option) => option.allowSelect)
+                      .map((option) => (
+                        <SelectItem key={option.id} value={String(option.id)}>
+                          {option.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Status do Pagamento</label>
+                <Select value={paymentStatus} onValueChange={setPaymentStatus}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentStatuses
+                      .filter((option) => option.allowSelect)
+                      .map((option) => (
+                        <SelectItem key={option.id} value={String(option.id)}>
+                          {option.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Desconto (R$)</label>
-                <Input type="number" step="0.01" min="0" value={discount} onChange={e => setDiscount(Number(e.target.value))} className="bg-background" />
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={discount}
+                  onChange={(event) => setDiscount(Number(event.target.value))}
+                  className="bg-background"
+                />
               </div>
               <div className="col-span-2 space-y-2">
                 <label className="text-sm font-medium">Observações</label>
-                <Input value={notes} onChange={e => setNotes(e.target.value)} className="bg-background" placeholder="Anotações internas..." />
+                <Input
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  className="bg-background"
+                  placeholder="Anotações internas..."
+                />
               </div>
             </div>
-
           </div>
-          <div className="mt-auto border-t border-border/50 pt-4 px-2">
-            <div className="flex justify-between items-end mb-4">
-              <div className="text-sm text-muted-foreground space-y-1">
+          <div className="mt-auto border-t border-border/50 px-2 pt-4">
+            <div className="mb-4 flex items-end justify-between">
+              <div className="space-y-1 text-sm text-muted-foreground">
                 <p>Subtotal: {formatCurrency(subtotal)}</p>
                 <p>Desconto: -{formatCurrency(discount)}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider mb-1">Total a Pagar</p>
+                <p className="mb-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">Total a Pagar</p>
                 <p className="text-3xl font-display font-bold text-primary">{formatCurrency(total)}</p>
               </div>
             </div>
             <div className="flex justify-end gap-3">
-              <Button type="button" variant="outline" onClick={() => setCreateModalOpen(false)}>Cancelar</Button>
-              <Button onClick={handleCreateSubmit} disabled={isCreating || items.length === 0} className="hover-elevate">
-                {isCreating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Receipt className="w-4 h-4 mr-2" />} Finalizar Venda
+              <Button type="button" variant="outline" onClick={() => setCreateModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleCreateSubmit} disabled={savingSale || items.length === 0} className="hover-elevate">
+                {savingSale ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Receipt className="mr-2 h-4 w-4" />
+                )}
+                Finalizar Venda
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* VIEW SALE MODAL */}
       <Dialog open={!!viewSaleId} onOpenChange={(open) => !open && setViewSaleId(null)}>
-        <DialogContent className="sm:max-w-[500px] bg-card border-border/50">
+        <DialogContent className="border-border/50 bg-card sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-display flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-primary" /> Detalhes da Venda #{saleToView?.id.toString().padStart(4, '0')}
+            <DialogTitle className="flex items-center gap-2 text-xl font-display">
+              <Receipt className="h-5 w-5 text-primary" /> Detalhes da Venda #{saleToView?.id.toString().padStart(4, "0")}
             </DialogTitle>
           </DialogHeader>
           {saleToView && (
-            <div className="py-4 space-y-6">
-              <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
+            <div className="space-y-6 py-4">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
                 <div>
-                  <p className="text-muted-foreground text-xs uppercase font-semibold">Data</p>
-                  <p className="font-medium mt-1">{formatDate(saleToView.createdAt)}</p>
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">Data</p>
+                  <p className="mt-1 font-medium">{formatDate(saleToView.createdAt)}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground text-xs uppercase font-semibold">Cliente</p>
-                  <p className="font-medium mt-1">{saleToView.customer?.name || 'Consumidor Final'}</p>
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">Cliente</p>
+                  <p className="mt-1 font-medium">{saleToView.customer?.name || "Consumidor Final"}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground text-xs uppercase font-semibold">Pagamento</p>
-                  <Badge variant="secondary" className="mt-1">{paymentMethods.find(p => p.value === saleToView.paymentMethod)?.label}</Badge>
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">Pagamento</p>
+                  <Badge variant="secondary" className="mt-1">
+                    {paymentMethodById[saleToView.paymentMethod] ?? saleToView.paymentMethod}
+                  </Badge>
                 </div>
                 {saleToView.notes && (
-                  <div className="col-span-2 border-l-2 border-primary/50 pl-3 py-1 bg-primary/5 mt-2 rounded-r">
+                  <div className="col-span-2 mt-2 rounded-r border-l-2 border-primary/50 bg-primary/5 py-1 pl-3">
                     <p className="text-xs text-muted-foreground">Observação</p>
                     <p className="italic">{saleToView.notes}</p>
                   </div>
                 )}
               </div>
 
-              <div className="border border-border/50 rounded-xl overflow-hidden">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-muted/30 text-muted-foreground text-xs">
+              <div className="overflow-hidden rounded-xl border border-border/50">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/30 text-xs text-muted-foreground">
                     <tr>
                       <th className="px-4 py-2">Item</th>
                       <th className="px-4 py-2 text-center">Qtd</th>
@@ -349,10 +586,12 @@ export default function Sales() {
                     </tr>
                   </thead>
                   <tbody>
-                    {saleToView.items.map(item => (
+                    {saleToView.items.map((item) => (
                       <tr key={item.id} className="border-b border-border/50 last:border-0">
                         <td className="px-4 py-3 font-medium">{item.product?.name || `Produto #${item.productId}`}</td>
-                        <td className="px-4 py-3 text-center">{item.quantity} x {formatCurrency(item.unitPrice)}</td>
+                        <td className="px-4 py-3 text-center">
+                          {item.quantity} x {formatCurrency(item.unitPrice)}
+                        </td>
                         <td className="px-4 py-3 text-right">{formatCurrency(item.subtotal)}</td>
                       </tr>
                     ))}
@@ -360,7 +599,7 @@ export default function Sales() {
                 </table>
               </div>
 
-              <div className="bg-background/50 rounded-xl p-4 border border-border/50 flex flex-col gap-2 text-sm">
+              <div className="flex flex-col gap-2 rounded-xl border border-border/50 bg-background/50 p-4 text-sm">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Subtotal Itens</span>
                   <span>{formatCurrency(saleToView.total + saleToView.discount)}</span>
@@ -371,7 +610,7 @@ export default function Sales() {
                     <span>-{formatCurrency(saleToView.discount)}</span>
                   </div>
                 )}
-                <div className="border-t border-border/50 pt-2 mt-1 flex justify-between font-bold text-lg text-primary">
+                <div className="mt-1 flex justify-between border-t border-border/50 pt-2 text-lg font-bold text-primary">
                   <span>Total</span>
                   <span>{formatCurrency(saleToView.total)}</span>
                 </div>

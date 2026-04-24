@@ -32,9 +32,13 @@ export default function Login() {
     }
   });
 
+  const submitLogin = () => {
+    login({ data: { login: identifier, password } });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    login({ data: { email: identifier, password } });
+    submitLogin();
   };
 
   return (
@@ -86,24 +90,31 @@ export default function Login() {
                 placeholder="admin ou admin@uaus.com.br" 
                 className="h-12 bg-background/50 border-white/10 focus-visible:ring-primary/50"
                 autoComplete="username"
+                autoFocus
                 required
               />
             </div>
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Senha</Label>
-                <a href="#" className="text-xs text-primary hover:text-primary/80 transition-colors">Esqueceu a senha?</a>
-              </div>
+              <Label htmlFor="password">Senha</Label>
               <Input 
                 id="password" 
                 type="password" 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submitLogin();
+                  }
+                }}
                 placeholder="••••••••" 
                 className="h-12 bg-background/50 border-white/10 focus-visible:ring-primary/50"
                 autoComplete="current-password"
                 required
               />
+              <div className="flex justify-end">
+                <a href="#" tabIndex={-1} className="text-xs text-primary hover:text-primary/80 transition-colors">Esqueceu a senha?</a>
+              </div>
             </div>
 
             <Button 

@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, type CSSProperties } from "react";
 import { Link, useLocation } from "wouter";
 import { 
   SidebarProvider, 
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/sidebar";
 import { 
   LayoutDashboard, 
+  Building2,
   Package, 
   Folder, 
   Tags, 
@@ -23,22 +24,31 @@ import {
   UserCog, 
   LogOut,
   Loader2,
-  ImageIcon
+  ImageIcon,
+  Truck
 } from "lucide-react";
 import { useGetMe, useLogout } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getGetMeQueryKey } from "@workspace/api-client-react";
+import { getDisplayName } from "@/lib/backend";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Produtos", href: "/produtos", icon: Package },
+  { name: "Departamentos", href: "/departamentos", icon: Building2 },
   { name: "Categorias", href: "/categorias", icon: Folder },
   { name: "Etiquetas", href: "/etiquetas", icon: Tags },
   { name: "Imagens", href: "/imagens", icon: ImageIcon },
+  { name: "Fornecedores", href: "/fornecedores", icon: Truck },
   { name: "Vendas", href: "/vendas", icon: ShoppingCart },
   { name: "Clientes", href: "/clientes", icon: Users },
   { name: "Usuários", href: "/usuarios", icon: UserCog },
 ];
+
+const roleLabels: Record<number, string> = {
+  1: "Administrador",
+  2: "Vendedor",
+};
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const [location, setLocation] = useLocation();
@@ -78,13 +88,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
     return null;
   }
 
+  const displayName = getDisplayName(user);
+  const initials = displayName.charAt(0).toUpperCase();
+  const roleLabel = roleLabels[user.role] ?? "Usuário";
+
   const style = {
     "--sidebar-width": "18rem",
     "--sidebar-width-icon": "4rem",
   };
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
+    <SidebarProvider style={style as CSSProperties}>
       <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
         <Sidebar className="border-r border-border/50 bg-card">
           <SidebarHeader className="p-6">
@@ -136,11 +150,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <SidebarFooter className="p-4 border-t border-border/50">
             <div className="flex items-center gap-3 mb-4 px-2">
               <div className="w-9 h-9 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-sm">
-                {user.name.charAt(0).toUpperCase()}
+                {initials}
               </div>
               <div className="flex flex-col">
-                <span className="text-sm font-medium leading-none">{user.name}</span>
-                <span className="text-xs text-muted-foreground mt-1 capitalize">{user.role}</span>
+                <span className="text-sm font-medium leading-none">{displayName}</span>
+                <span className="text-xs text-muted-foreground mt-1">{roleLabel}</span>
               </div>
             </div>
             <button 

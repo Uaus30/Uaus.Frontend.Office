@@ -1,296 +1,56 @@
-import { useState, useRef, useCallback } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout";
-import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency } from "@/lib/formatters";
-import { Plus, Search, Edit2, Trash2, Loader2, Tag as TagIcon, X, ImageIcon, Upload } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
-import { z } from "zod";
-import { useForm, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Edit2, ImageIcon, Loader2, Plus, Search, Trash2, Upload, X } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { formatCurrency } from "@/lib/formatters";
+import {
+  buildProductCollections,
+  buildPublicImageUrl,
+  createImageFromFile,
+  createOrReuseProductGroup,
+  deleteProduct,
+  getAllCategories,
+  getAllDepartments,
+  getAllImages,
+  getAllProductGroups,
+  getAllProductImages,
+  getAllProductTags,
+  getAllTags,
+  getEnumOptions,
+  getProductsPage,
+  syncProductImages,
+  syncProductTags,
+  upsertProduct,
+} from "@/lib/backend";
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const MAX_IMAGE_SIZE = 1024 * 1024;
-
-async function apiGet(path: string, params?: Record<string, any>) {
-  const url = new URL(`${window.location.origin}${BASE}/api${path}`);
-  if (params) Object.entries(params).forEach(([k, v]) => v != null && url.searchParams.set(k, String(v)));
-  const r = await fetch(url.toString(), { credentials: "include" });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-async function apiMutate(method: string, path: string, body?: any) {
-  const r = await fetch(`${window.location.origin}${BASE}/api${path}`, {
-    method, credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-const formSchema = z.object({
-  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  description: z.string().optional(),
-  price: z.coerce.number().min(0),
-  costPrice: z.coerce.number().min(0),
-  stock: z.coerce.number().int().min(0),
-  categoryId: z.coerce.number().nullable().optional(),
-  tagIds: z.array(z.number()).default([]),
-  active: z.boolean().default(true),
-});
-
-type FormValues = z.infer<typeof formSchema>;
-
-function TagCombobox({ tagIds, onChange, allTags, onCreateTag }: {
+type ProductForm = {
+  departmentId: string;
+  categoryId: string;
+  productGroupName: string;
+  name: string;
+  description: string;
+  price: number;
+  status: string;
   tagIds: number[];
-  onChange: (ids: number[]) => void;
-  allTags: any[];
-  onCreateTag: (name: string) => Promise<any>;
-}) {
-  const [inputValue, setInputValue] = useState("");
-  const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+};
 
-  const filtered = allTags.filter(t =>
-    t.name.toLowerCase().includes(inputValue.toLowerCase()) && !tagIds.includes(t.id)
-  );
-  const selected = allTags.filter(t => tagIds.includes(t.id));
-  const exactMatch = allTags.some(t => t.name.toLowerCase() === inputValue.toLowerCase());
-
-  const addTag = (id: number) => {
-    if (!tagIds.includes(id)) onChange([...tagIds, id]);
-    setInputValue("");
-    setOpen(false);
-  };
-
-  const removeTag = (id: number) => onChange(tagIds.filter(i => i !== id));
-
-  const handleKeyDown = async (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (inputValue.trim() && !exactMatch) {
-        setCreating(true);
-        try {
-          const newTag = await onCreateTag(inputValue.trim());
-          onChange([...tagIds, newTag.id]);
-          setInputValue("");
-          setOpen(false);
-        } finally { setCreating(false); }
-      } else if (filtered.length > 0) {
-        addTag(filtered[0].id);
-      }
-    } else if (e.key === "Escape") {
-      setOpen(false);
-    } else if (e.key === "Backspace" && !inputValue && selected.length > 0) {
-      removeTag(selected[selected.length - 1].id);
-    }
-  };
-
-  return (
-    <div className="relative">
-      <div
-        className="min-h-[42px] flex flex-wrap gap-1.5 items-center p-2 border border-border/50 rounded-xl bg-background/50 cursor-text"
-        onClick={() => { setOpen(true); inputRef.current?.focus(); }}
-      >
-        {selected.map(t => (
-          <span key={t.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border" style={{ borderColor: t.color, color: t.color, backgroundColor: `${t.color}18` }}>
-            {t.name}
-            <button type="button" onClick={e => { e.stopPropagation(); removeTag(t.id); }} className="hover:opacity-70 transition-opacity">
-              <X className="w-3 h-3" />
-            </button>
-          </span>
-        ))}
-        <input
-          ref={inputRef}
-          value={inputValue}
-          onChange={e => { setInputValue(e.target.value); setOpen(true); }}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder={selected.length === 0 ? "Buscar ou criar etiqueta..." : ""}
-          className="flex-1 min-w-28 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
-          disabled={creating}
-        />
-        {creating && <Loader2 className="w-3 h-3 animate-spin text-primary" />}
-      </div>
-
-      {open && (inputValue || filtered.length > 0) && (
-        <div className="absolute top-full mt-1 left-0 right-0 z-50 bg-card border border-border/50 rounded-xl shadow-xl overflow-hidden">
-          {filtered.map(t => (
-            <button
-              key={t.id}
-              type="button"
-              onMouseDown={() => addTag(t.id)}
-              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left"
-            >
-              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
-              <span className="text-sm" style={{ color: t.color }}>{t.name}</span>
-            </button>
-          ))}
-          {inputValue.trim() && !exactMatch && (
-            <button
-              type="button"
-              onMouseDown={async () => {
-                setCreating(true);
-                try {
-                  const newTag = await onCreateTag(inputValue.trim());
-                  onChange([...tagIds, newTag.id]);
-                  setInputValue(""); setOpen(false);
-                } finally { setCreating(false); }
-              }}
-              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-primary/10 transition-colors text-left border-t border-border/30"
-            >
-              <Plus className="w-3 h-3 text-primary flex-shrink-0" />
-              <span className="text-sm text-primary">Criar "{inputValue.trim()}"</span>
-            </button>
-          )}
-          {filtered.length === 0 && !inputValue.trim() && (
-            <p className="px-3 py-2 text-xs text-muted-foreground">Nenhuma etiqueta disponível.</p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ProductImageSection({ images, onImagesChange, editingId, uploading, onUpload, onRemove, onReorder }: {
-  images: any[];
-  onImagesChange: (imgs: any[]) => void;
-  editingId: number | null;
-  uploading: boolean;
-  onUpload: (files: FileList) => void;
-  onRemove: (imageId: number) => void;
-  onReorder: (newOrder: any[]) => void;
-}) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-
-  const handleDragStart = (e: React.DragEvent, i: number) => {
-    setDragIndex(i);
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  const handleDragOver = (e: React.DragEvent, i: number) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOverIndex(i);
-  };
-
-  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
-    e.preventDefault();
-    if (dragIndex === null || dragIndex === targetIndex) {
-      setDragIndex(null);
-      setDragOverIndex(null);
-      return;
-    }
-    const newImgs = [...images];
-    const [item] = newImgs.splice(dragIndex, 1);
-    newImgs.splice(targetIndex, 0, item);
-    const ordered = newImgs.map((img, i) => ({ ...img, displayOrder: i }));
-    onReorder(ordered);
-    setDragIndex(null);
-    setDragOverIndex(null);
-  };
-
-  const handleDragEnd = () => {
-    setDragIndex(null);
-    setDragOverIndex(null);
-  };
-
-  const handleDropZone = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (e.dataTransfer.files?.length) onUpload(e.dataTransfer.files);
-  };
-
-  return (
-    <div className="pt-2 space-y-3 border-t border-border/30">
-      <div className="flex items-center justify-between">
-        <label className="text-sm font-medium flex items-center gap-2">
-          <ImageIcon className="w-4 h-4" /> Imagens do Produto
-          <span className="text-xs text-muted-foreground font-normal">(arraste para reordenar · primeira = principal · máx. 1MB)</span>
-        </label>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-        >
-          {uploading ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : <Upload className="w-3 h-3 mr-1.5" />}
-          Adicionar
-        </Button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={e => e.target.files && onUpload(e.target.files)}
-          onClick={e => { (e.target as HTMLInputElement).value = ""; }}
-        />
-      </div>
-
-      {images.length > 0 ? (
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-          {images.map((img, i) => (
-            <div
-              key={img.id}
-              draggable
-              onDragStart={e => handleDragStart(e, i)}
-              onDragOver={e => handleDragOver(e, i)}
-              onDrop={e => handleDrop(e, i)}
-              onDragEnd={handleDragEnd}
-              className={`relative group cursor-grab active:cursor-grabbing transition-all duration-150 ${
-                dragIndex === i ? "opacity-30 scale-95" : ""
-              } ${dragOverIndex === i && dragIndex !== i ? "ring-2 ring-primary ring-offset-1 ring-offset-card rounded-lg" : ""}`}
-            >
-              <div className={`aspect-square rounded-lg overflow-hidden border-2 transition-colors ${i === 0 ? "border-primary" : "border-border/30"}`}>
-                <img src={`${BASE}${img.url}`} alt={img.name} className="w-full h-full object-cover pointer-events-none select-none" />
-              </div>
-              {i === 0 && (
-                <span className="absolute top-1 left-1 text-[9px] font-bold bg-primary text-primary-foreground px-1 rounded pointer-events-none">
-                  Principal
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => onRemove(img.id)}
-                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-destructive/90 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-destructive"
-              >
-                <X className="w-3 h-3" />
-              </button>
-              <p className="text-[9px] text-muted-foreground truncate mt-0.5 px-0.5">{img.name}</p>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div
-          className="border-2 border-dashed border-border/40 rounded-xl p-8 text-center cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-all"
-          onClick={() => fileRef.current?.click()}
-          onDragOver={e => e.preventDefault()}
-          onDrop={handleDropZone}
-        >
-          <ImageIcon className="w-8 h-8 mx-auto opacity-20 mb-2" />
-          <p className="text-xs text-muted-foreground">Clique ou arraste imagens aqui</p>
-          <p className="text-[11px] text-muted-foreground/60 mt-1">JPG, PNG, WebP — máximo 1MB por imagem</p>
-        </div>
-      )}
-    </div>
-  );
-}
+type LocalImage = {
+  imageId?: number;
+  associationId?: number;
+  name: string;
+  url: string;
+  file?: File;
+};
 
 export default function Products() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const [search, setSearch] = useState("");
@@ -298,185 +58,294 @@ export default function Products() {
   const [limit, setLimit] = useState(20);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [productImages, setProductImages] = useState<any[]>([]);
-  const [uploadingImage, setUploadingImage] = useState(false);
-
-  const { data: productsData, isLoading } = useQuery({
-    queryKey: ["products", { search, page, limit }],
-    queryFn: () => apiGet("/products", { search: search || undefined, page, limit }),
-  });
-
-  const { data: categories } = useQuery({ queryKey: ["categories"], queryFn: () => apiGet("/categories") });
-  const { data: tagsData } = useQuery({
-    queryKey: ["tags-all"],
-    queryFn: () => apiGet("/tags", { limit: 200 }),
-  });
-  const allTags = tagsData?.data || [];
-
-  const createTag = useMutation({
-    mutationFn: (name: string) => apiMutate("POST", "/tags", { name, color: "#6366f1" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tags-all"] }),
-  });
-
-  const deleteProduct = useMutation({
-    mutationFn: (id: number) => apiMutate("DELETE", `/products/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); toast({ title: "Produto removido." }); },
-  });
-
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: { name: "", description: "", price: 0, costPrice: 0, stock: 0, tagIds: [], active: true, categoryId: null },
-  });
-
   const [saving, setSaving] = useState(false);
+  const [images, setImages] = useState<LocalImage[]>([]);
+  const [form, setForm] = useState<ProductForm>({
+    departmentId: "",
+    categoryId: "",
+    productGroupName: "",
+    name: "",
+    description: "",
+    price: 0,
+    status: "",
+    tagIds: [],
+  });
 
-  const handleOpenModal = (product?: any) => {
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments-all-for-products"],
+    queryFn: () => getAllDepartments(),
+  });
+
+  const { data: categories = [] } = useQuery({
+    queryKey: ["categories-all-for-products"],
+    queryFn: () => getAllCategories(),
+  });
+
+  const { data: productGroups = [] } = useQuery({
+    queryKey: ["product-groups-all-for-products"],
+    queryFn: () => getAllProductGroups(),
+  });
+
+  const { data: tags = [] } = useQuery({
+    queryKey: ["tags-all-for-products"],
+    queryFn: () => getAllTags(),
+  });
+
+  const { data: productTags = [] } = useQuery({
+    queryKey: ["product-tags-all-for-products"],
+    queryFn: () => getAllProductTags(),
+  });
+
+  const { data: productImages = [] } = useQuery({
+    queryKey: ["product-images-all-for-products"],
+    queryFn: () => getAllProductImages(),
+  });
+
+  const { data: imagesCatalog = [] } = useQuery({
+    queryKey: ["images-all-for-products"],
+    queryFn: () => getAllImages(),
+  });
+
+  const { data: statusOptions = [] } = useQuery({
+    queryKey: ["product-status-options"],
+    queryFn: () => getEnumOptions("/Products/enums/product-status"),
+  });
+
+  const { data: productPage, isLoading } = useQuery({
+    queryKey: ["products-page", { search, page, limit }],
+    queryFn: () => getProductsPage({ search, page, limit }),
+  });
+
+  const selectableStatusOptions = useMemo(
+    () => statusOptions.filter((item) => item.allowSelect),
+    [statusOptions],
+  );
+
+  const enrichedProducts = useMemo(() => {
+    const pageProducts = productPage?.data ?? [];
+    return buildProductCollections({
+      products: pageProducts,
+      productGroups,
+      categories,
+      departments,
+      tags,
+      productTags,
+      images: imagesCatalog,
+      productImages,
+    }).enrichedProducts;
+  }, [categories, departments, imagesCatalog, productGroups, productImages, productPage?.data, productTags, tags]);
+
+  const filteredCategories = useMemo(
+    () =>
+      categories.filter((category) =>
+        form.departmentId ? category.departmentId === Number(form.departmentId) : true,
+      ),
+    [categories, form.departmentId],
+  );
+
+  function resetForm() {
+    setEditingId(null);
+    setForm({
+      departmentId: departments[0]?.id.toString() ?? "",
+      categoryId: "",
+      productGroupName: "",
+      name: "",
+      description: "",
+      price: 0,
+      status: selectableStatusOptions[0]?.id.toString() ?? "",
+      tagIds: [],
+    });
+    setImages([]);
+  }
+
+  function openModal(product?: any) {
     if (product) {
       setEditingId(product.id);
-      form.reset({
-        name: product.name, description: product.description || "",
-        price: product.price, costPrice: product.costPrice, stock: product.stock,
-        categoryId: product.categoryId, tagIds: product.tags.map((t: any) => t.id), active: product.active,
+      setForm({
+        departmentId: product.department?.id.toString() ?? "",
+        categoryId: product.category?.id.toString() ?? "",
+        productGroupName: product.productGroup?.name ?? "",
+        name: product.name,
+        description: product.description || "",
+        price: product.price,
+        status: String(product.status),
+        tagIds: product.tags.map((tag) => tag.id),
       });
-      setProductImages(product.images || []);
+      setImages(
+        product.images.map((item) => ({
+          imageId: item.imageId,
+          associationId: item.associationId,
+          name: item.image.name,
+          url: buildPublicImageUrl(item.image.url),
+        })),
+      );
     } else {
-      setEditingId(null);
-      form.reset({ name: "", description: "", price: 0, costPrice: 0, stock: 0, tagIds: [], active: true, categoryId: null });
-      setProductImages([]);
+      resetForm();
     }
+
     setModalOpen(true);
-  };
+  }
 
-  const handleCloseModal = () => {
-    setModalOpen(false);
-    form.reset();
-    setProductImages([]);
-    setEditingId(null);
-  };
+  function moveImage(index: number, direction: -1 | 1) {
+    setImages((current) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.length) return current;
+      const copy = [...current];
+      const [item] = copy.splice(index, 1);
+      copy.splice(nextIndex, 0, item);
+      return copy;
+    });
+  }
 
-  const uploadImages = useCallback(async (files: FileList) => {
-    const fileArr = Array.from(files);
-    for (const file of fileArr) {
-      if (file.size > MAX_IMAGE_SIZE) {
-        toast({ title: `"${file.name}" excede 1MB`, description: "Selecione uma imagem menor.", variant: "destructive" });
-        continue;
-      }
-      setUploadingImage(true);
-      try {
-        const { uploadURL, objectPath } = await apiMutate("POST", "/images/upload-url", {
-          name: file.name, size: file.size, contentType: file.type,
-        });
-        await fetch(uploadURL, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-        const imgRecord = await apiMutate("POST", "/images", {
-          name: file.name.replace(/\.[^/.]+$/, ""),
-          type: "produtos",
-          objectPath,
-        });
-        const newImg = { ...imgRecord, url: `/api/storage${imgRecord.objectPath}` };
+  function handleFileSelection(event: React.ChangeEvent<HTMLInputElement>) {
+    const fileList = Array.from(event.target.files ?? []);
+    const nextImages = fileList.map((file) => ({
+      name: file.name.replace(/\.[^/.]+$/, ""),
+      url: URL.createObjectURL(file),
+      file,
+    }));
+    setImages((current) => [...current, ...nextImages]);
+  }
 
-        if (editingId) {
-          setProductImages(prev => {
-            const order = prev.length;
-            apiMutate("POST", `/products/${editingId}/images`, { imageId: imgRecord.id, displayOrder: order });
-            return [...prev, { ...newImg, displayOrder: order }];
-          });
-        } else {
-          setProductImages(prev => [...prev, { ...newImg, displayOrder: prev.length }]);
-        }
-      } catch (err: any) {
-        toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
-      } finally {
-        setUploadingImage(false);
-      }
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+
+    if (!form.categoryId || !form.productGroupName.trim() || !form.name.trim() || !form.status) {
+      toast({
+        title: "Preencha categoria, grupo, nome e status.",
+        variant: "destructive",
+      });
+      return;
     }
-  }, [editingId, toast]);
 
-  const removeImage = useCallback(async (imageId: number) => {
-    if (editingId) {
-      try {
-        await apiMutate("DELETE", `/products/${editingId}/images/${imageId}`);
-      } catch (err: any) {
-        toast({ title: "Erro ao remover imagem", description: err.message, variant: "destructive" });
-        return;
-      }
-    } else {
-      try {
-        await apiMutate("DELETE", `/images/${imageId}`);
-      } catch {
-        /* ignore staged image soft-delete errors */
-      }
-    }
-    setProductImages(prev => prev.filter(i => i.id !== imageId));
-  }, [editingId, toast]);
-
-  const reorderImages = useCallback(async (ordered: any[]) => {
-    setProductImages(ordered);
-    if (editingId) {
-      try {
-        await apiMutate("PUT", `/products/${editingId}/images/reorder`, {
-          order: ordered.map(img => ({ imageId: img.id, displayOrder: img.displayOrder })),
-        });
-      } catch (err: any) {
-        toast({ title: "Erro ao reordenar", description: err.message, variant: "destructive" });
-      }
-    }
-  }, [editingId, toast]);
-
-  const onSubmit = async (data: FormValues) => {
     setSaving(true);
     try {
-      if (editingId) {
-        await apiMutate("PUT", `/products/${editingId}`, data);
-        toast({ title: "Produto atualizado." });
-      } else {
-        const product = await apiMutate("POST", "/products", data);
-        for (let i = 0; i < productImages.length; i++) {
-          await apiMutate("POST", `/products/${product.id}/images`, {
-            imageId: productImages[i].id,
-            displayOrder: i,
-          });
-        }
-        toast({ title: "Produto criado." });
+      const productGroupId = await createOrReuseProductGroup({
+        categoryId: Number(form.categoryId),
+        name: form.productGroupName,
+        existingGroups: productGroups,
+      });
+
+      const productId = await upsertProduct({
+        id: editingId,
+        productGroupId,
+        name: form.name,
+        description: form.description,
+        price: form.price,
+        status: Number(form.status),
+      });
+
+      const currentTagAssociations = productTags.filter((item) => item.productId === productId);
+      await syncProductTags({
+        productId,
+        currentAssociations: currentTagAssociations,
+        nextTagIds: form.tagIds,
+      });
+
+      const persistedNewImages = [];
+      for (const image of images) {
+        if (image.imageId || !image.file) continue;
+        const created = await createImageFromFile({
+          file: image.file,
+          name: image.name,
+          type: 3,
+        });
+        persistedNewImages.push({
+          ...image,
+          imageId: created.id,
+          url: buildPublicImageUrl(created.url),
+        });
       }
-      qc.invalidateQueries({ queryKey: ["products"] });
-      handleCloseModal();
-    } catch (err: any) {
-      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" });
+
+      const allImages = images
+        .filter((image) => image.imageId)
+        .concat(persistedNewImages)
+        .map((image) => ({
+          imageId: image.imageId as number,
+          displayOrder: 0,
+        }))
+        .map((image, index) => ({ ...image, displayOrder: index }));
+
+      await syncProductImages({
+        productId,
+        currentAssociations: productImages.filter((item) => item.productId === productId),
+        nextImages: allImages,
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["products-page"] });
+      queryClient.invalidateQueries({ queryKey: ["product-groups-all-for-products"] });
+      queryClient.invalidateQueries({ queryKey: ["product-tags-all-for-products"] });
+      queryClient.invalidateQueries({ queryKey: ["product-images-all-for-products"] });
+      queryClient.invalidateQueries({ queryKey: ["images-all-for-products"] });
+
+      toast({ title: editingId ? "Produto atualizado." : "Produto criado." });
+      setModalOpen(false);
+      resetForm();
+    } catch (error) {
+      toast({
+        title: "Erro ao salvar produto",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const totalPages = Math.max(1, Math.ceil((productsData?.total || 0) / limit));
+  async function handleDelete(productId: number) {
+    try {
+      await deleteProduct(productId);
+      queryClient.invalidateQueries({ queryKey: ["products-page"] });
+      toast({ title: "Produto removido." });
+    } catch (error) {
+      toast({
+        title: "Erro ao remover produto",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  const totalPages = Math.max(1, Math.ceil((productPage?.total || 0) / limit));
 
   return (
     <AppLayout>
       <div className="flex flex-col gap-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-display font-bold text-foreground">Produtos</h1>
-            <p className="text-muted-foreground mt-1">Gerencie seu catálogo de produtos e estoque.</p>
+            <p className="mt-1 text-muted-foreground">Gerencie o catálogo real da loja no modelo departamento, categoria, grupo e produto.</p>
           </div>
-          <Button onClick={() => handleOpenModal()} className="hover-elevate bg-primary text-primary-foreground">
-            <Plus className="w-4 h-4 mr-2" /> Adicionar Produto
+          <Button onClick={() => openModal()} className="bg-primary text-primary-foreground hover-elevate">
+            <Plus className="mr-2 h-4 w-4" /> Adicionar Produto
           </Button>
         </div>
 
-        <div className="bg-card rounded-2xl border border-border/50 shadow-lg shadow-black/5 overflow-hidden">
-          <div className="p-4 border-b border-border/50 flex gap-4">
+        <div className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-lg shadow-black/5">
+          <div className="border-b border-border/50 p-4">
             <div className="relative w-full sm:w-96">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Buscar produtos..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} className="pl-9 bg-background" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Buscar produtos..."
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+                className="bg-background pl-9"
+              />
             </div>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-muted-foreground uppercase bg-muted/30">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-muted/30 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-6 py-4">Nome</th>
                   <th className="px-6 py-4">Imagem</th>
+                  <th className="px-6 py-4">Departamento</th>
                   <th className="px-6 py-4">Categoria</th>
+                  <th className="px-6 py-4">Grupo</th>
                   <th className="px-6 py-4">Preço</th>
                   <th className="px-6 py-4">Estoque</th>
                   <th className="px-6 py-4">Etiquetas</th>
@@ -486,181 +355,266 @@ export default function Products() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={8} className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" /></td></tr>
-                ) : productsData?.data?.map((product: any) => {
-                  const mainImage = product.images?.[0];
-                  return (
-                    <tr key={product.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                      <td className="px-6 py-4 font-medium text-foreground">{product.name}</td>
-                      <td className="px-6 py-4">
-                        {mainImage ? (
-                          <img src={`${BASE}${mainImage.url}`} alt={mainImage.name} className="w-10 h-10 rounded-lg object-cover border border-border/50" />
-                        ) : (
-                          <div className="w-10 h-10 rounded-lg bg-muted/50 flex items-center justify-center">
-                            <ImageIcon className="w-4 h-4 text-muted-foreground/50" />
+                  <tr>
+                    <td colSpan={10} className="py-12 text-center">
+                      <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                    </td>
+                  </tr>
+                ) : (
+                  enrichedProducts.map((product) => {
+                    const mainImage = product.images[0]?.image;
+                    return (
+                      <tr key={product.id} className="border-b border-border/50 transition-colors hover:bg-muted/20">
+                        <td className="px-6 py-4 font-medium text-foreground">{product.name}</td>
+                        <td className="px-6 py-4">
+                          {mainImage ? (
+                            <img src={buildPublicImageUrl(mainImage.url)} alt={mainImage.name} className="h-10 w-10 rounded-lg border border-border/50 object-cover" />
+                          ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/50">
+                              <ImageIcon className="h-4 w-4 text-muted-foreground/50" />
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-muted-foreground">{product.department?.name || "-"}</td>
+                        <td className="px-6 py-4 text-muted-foreground">{product.category?.name || "-"}</td>
+                        <td className="px-6 py-4 text-muted-foreground">{product.productGroup?.name || "-"}</td>
+                        <td className="px-6 py-4 font-medium text-primary">{formatCurrency(product.price)}</td>
+                        <td className="px-6 py-4">
+                          <span className={`rounded-md px-2.5 py-1 text-xs font-semibold ${product.stock < 10 ? "bg-destructive/20 text-destructive" : "bg-secondary text-secondary-foreground"}`}>
+                            {product.stock} un
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1">
+                            {product.tags.map((tag) => (
+                              <span key={tag.id} className="rounded-full border px-2 py-0.5 text-[10px] font-medium" style={{ borderColor: tag.color, color: tag.color, backgroundColor: `${tag.color}15` }}>
+                                {tag.name}
+                              </span>
+                            ))}
                           </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-muted-foreground">{product.category?.name || '-'}</td>
-                      <td className="px-6 py-4 font-medium text-primary">{formatCurrency(product.price)}</td>
-                      <td className="px-6 py-4">
-                        <span className={`px-2.5 py-1 rounded-md text-xs font-semibold ${product.stock < 10 ? 'bg-destructive/20 text-destructive' : 'bg-secondary text-secondary-foreground'}`}>
-                          {product.stock} un
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {product.tags.map((tag: any) => (
-                            <span key={tag.id} className="px-2 py-0.5 rounded-full text-[10px] font-medium border" style={{ borderColor: tag.color, color: tag.color, backgroundColor: `${tag.color}15` }}>
-                              {tag.name}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        {product.active ? (
-                          <Badge className="bg-emerald-500/20 text-emerald-500 hover:bg-emerald-500/30 border-0">Ativo</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-muted-foreground">Inativo</Badge>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-primary hover-elevate" onClick={() => handleOpenModal(product)}>
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate" onClick={() => {
-                            if (confirm("Remover este produto?")) deleteProduct.mutate(product.id);
-                          }}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                        <td className="px-6 py-4">
+                          <Badge variant={product.status === 2 ? "default" : "outline"}>
+                            {statusOptions.find((option) => option.id === product.status)?.name ?? product.status}
+                          </Badge>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground hover:text-primary hover-elevate"
+                              onClick={() => openModal(product)}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive hover-elevate"
+                              onClick={() => {
+                                if (confirm("Remover este produto?")) {
+                                  void handleDelete(product.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
 
-          <div className="p-4 border-t border-border/50 flex items-center justify-between text-sm text-muted-foreground">
+          <div className="flex items-center justify-between border-t border-border/50 p-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <span>Itens por página:</span>
-              <Select value={String(limit)} onValueChange={v => { setLimit(Number(v)); setPage(1); }}>
-                <SelectTrigger className="h-8 w-20 bg-background text-xs"><SelectValue /></SelectTrigger>
+              <Select
+                value={String(limit)}
+                onValueChange={(value) => {
+                  setLimit(Number(value));
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-20 bg-background text-xs">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="20">20</SelectItem>
                   <SelectItem value="50">50</SelectItem>
                   <SelectItem value="100">100</SelectItem>
                 </SelectContent>
               </Select>
-              <span className="ml-2">Total: {productsData?.total || 0}</span>
+              <span className="ml-2">Total: {productPage?.total || 0}</span>
             </div>
-            <div className="flex gap-2 items-center">
-              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</Button>
-              <span className="text-xs px-2">{page} / {totalPages}</span>
-              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Próxima</Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>
+                Anterior
+              </Button>
+              <span className="px-2 text-xs">{page} / {totalPages}</span>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)}>
+                Próxima
+              </Button>
             </div>
           </div>
         </div>
       </div>
 
-      <Dialog open={modalOpen} onOpenChange={open => { if (!open) handleCloseModal(); }}>
-        <DialogContent className="sm:max-w-[720px] max-h-[90vh] overflow-y-auto bg-card border-border/50">
+      <Dialog open={modalOpen} onOpenChange={(open) => !open ? setModalOpen(false) : setModalOpen(true)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-border/50 bg-card sm:max-w-[760px]">
           <DialogHeader>
             <DialogTitle className="text-xl font-display">{editingId ? "Editar Produto" : "Novo Produto"}</DialogTitle>
           </DialogHeader>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 py-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="col-span-2 space-y-2">
-                <label className="text-sm font-medium">Nome do Produto</label>
-                <Input {...form.register("name")} className="bg-background" />
-                {form.formState.errors.name && <p className="text-xs text-destructive">{form.formState.errors.name.message}</p>}
-              </div>
-
-              <div className="col-span-2 space-y-2">
-                <label className="text-sm font-medium">Descrição</label>
-                <Input {...form.register("description")} className="bg-background" />
-              </div>
-
+          <form onSubmit={handleSubmit} className="space-y-5 py-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Preço de Venda (R$)</label>
-                <Input type="number" step="0.01" {...form.register("price")} className="bg-background" />
+                <label className="text-sm font-medium">Departamento</label>
+                <Select
+                  value={form.departmentId}
+                  onValueChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      departmentId: value,
+                      categoryId: "",
+                    }))
+                  }
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {departments.map((department) => (
+                      <SelectItem key={department.id} value={department.id.toString()}>
+                        {department.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Preço de Custo (R$)</label>
-                <Input type="number" step="0.01" {...form.register("costPrice")} className="bg-background" />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Estoque</label>
-                <Input type="number" {...form.register("stock")} className="bg-background" />
-              </div>
-
               <div className="space-y-2">
                 <label className="text-sm font-medium">Categoria</label>
-                <Controller
-                  control={form.control}
-                  name="categoryId"
-                  render={({ field }) => (
-                    <Select value={field.value?.toString() || ""} onValueChange={val => field.onChange(val === "null" ? null : Number(val))}>
-                      <SelectTrigger className="bg-background"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="null">Nenhuma</SelectItem>
-                        {(categories?.data || categories || []).map((c: any) => <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
+                <Select value={form.categoryId} onValueChange={(value) => setForm((current) => ({ ...current, categoryId: value }))}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredCategories.map((category) => (
+                      <SelectItem key={category.id} value={category.id.toString()}>
+                        {category.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-
-              <div className="col-span-2 space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <TagIcon className="w-4 h-4" /> Etiquetas
-                  <span className="text-xs text-muted-foreground font-normal">(busque ou tecle Enter para criar)</span>
-                </label>
-                <Controller
-                  control={form.control}
-                  name="tagIds"
-                  render={({ field }) => (
-                    <TagCombobox
-                      tagIds={field.value}
-                      onChange={field.onChange}
-                      allTags={allTags}
-                      onCreateTag={async (name) => {
-                        const tag = await createTag.mutateAsync(name);
-                        return tag;
-                      }}
-                    />
-                  )}
-                />
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Grupo Comercial</label>
+                <Input value={form.productGroupName} onChange={(event) => setForm((current) => ({ ...current, productGroupName: event.target.value }))} className="bg-background" placeholder="Ex: Copo térmico 500ml" />
               </div>
-
-              <div className="col-span-2 flex items-center gap-2 mt-1">
-                <Controller
-                  control={form.control}
-                  name="active"
-                  render={({ field }) => <Checkbox id="active" checked={field.value} onCheckedChange={field.onChange} />}
-                />
-                <label htmlFor="active" className="text-sm font-medium cursor-pointer">Produto Ativo</label>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Nome do Produto</label>
+                <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="bg-background" placeholder="Ex: Copo térmico 500ml azul" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Descrição</label>
+                <Input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} className="bg-background" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Preço de Venda (R$)</label>
+                <Input type="number" step="0.01" min="0" value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: Number(event.target.value) }))} className="bg-background" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Status</label>
+                <Select value={form.status} onValueChange={(value) => setForm((current) => ({ ...current, status: value }))}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Selecione..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectableStatusOptions.map((status) => (
+                      <SelectItem key={status.id} value={status.id.toString()}>
+                        {status.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
-            <ProductImageSection
-              images={productImages}
-              onImagesChange={setProductImages}
-              editingId={editingId}
-              uploading={uploadingImage}
-              onUpload={uploadImages}
-              onRemove={removeImage}
-              onReorder={reorderImages}
-            />
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Etiquetas</label>
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-background/50 p-3 sm:grid-cols-3">
+                {tags.map((tag) => (
+                  <label key={tag.id} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={form.tagIds.includes(tag.id)}
+                      onCheckedChange={(checked) =>
+                        setForm((current) => ({
+                          ...current,
+                          tagIds: checked
+                            ? [...current.tagIds, tag.id]
+                            : current.tagIds.filter((id) => id !== tag.id),
+                        }))
+                      }
+                    />
+                    <span style={{ color: tag.color }}>{tag.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3 border-t border-border/30 pt-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">Imagens do Produto</label>
+                <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary">
+                  <Upload className="h-4 w-4" />
+                  Adicionar imagens
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelection} />
+                </label>
+              </div>
+
+              {images.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {images.map((image, index) => (
+                    <div key={`${image.name}-${index}`} className="relative overflow-hidden rounded-xl border border-border/50 bg-background/50">
+                      <img src={image.url} alt={image.name} className="aspect-square w-full object-cover" />
+                      <div className="p-2">
+                        <p className="truncate text-xs font-medium">{image.name}</p>
+                        {index === 0 && <p className="mt-1 text-[10px] text-primary">Imagem principal</p>}
+                      </div>
+                      <div className="absolute right-2 top-2 flex gap-1">
+                        <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, -1)} disabled={index === 0}>
+                          ↑
+                        </button>
+                        <button type="button" className="rounded bg-card/90 p-1" onClick={() => moveImage(index, 1)} disabled={index === images.length - 1}>
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded bg-card/90 p-1 text-destructive"
+                          onClick={() => setImages((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border-2 border-dashed border-border/40 p-8 text-center text-muted-foreground">
+                  Nenhuma imagem selecionada.
+                </div>
+              )}
+            </div>
 
             <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={handleCloseModal}>Cancelar</Button>
-              <Button type="submit" disabled={saving || uploadingImage} className="bg-primary text-primary-foreground hover-elevate">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar"}
+              <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={saving} className="bg-primary text-primary-foreground hover-elevate">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salvar"}
               </Button>
             </DialogFooter>
           </form>
