@@ -210,10 +210,7 @@ export const API_BASE_URL =
   (typeof import.meta !== "undefined" &&
     (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
       ?.VITE_API_BASE_URL) ||
-  (typeof window !== "undefined" &&
-  ["localhost", "127.0.0.1"].includes(window.location.hostname)
-    ? "/api"
-    : "https://api.uaus.com.br");
+  (typeof window !== "undefined" ? "/api" : "https://api.uaus.com.br");
 
 export class ApiError extends Error {
   status: number;

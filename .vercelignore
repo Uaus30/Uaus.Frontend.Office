@@ -1,0 +1,9 @@
+.git
+.agents
+.local
+.vercel
+node_modules
+artifacts/gestao/node_modules
+artifacts/gestao/dist
+lib/api-client-react/node_modules
+npm-debug.log
