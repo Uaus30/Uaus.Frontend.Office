@@ -73,6 +73,7 @@ export function buildMockTagReport(tagName: string, color: string): TagReport {
       updatedAt: null,
       name: tagName,
       color,
+      isPublic: false,
     },
     totalRevenue: 1875.4,
     totalSales: 54,

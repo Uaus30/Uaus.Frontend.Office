@@ -125,6 +125,7 @@ export interface TagDto {
   updatedAt: string | null;
   name: string;
   color: string;
+  isPublic: boolean;
 }
 
 export interface ProductTagDto {

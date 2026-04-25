@@ -223,6 +223,17 @@ export async function getTagsPage(params?: {
   });
 }
 
+export async function searchTags(params?: {
+  search?: string;
+  limit?: number;
+}) {
+  return getPaged<TagDto>("/Tags", {
+    search: params?.search,
+    page: 1,
+    size: params?.limit ?? 20,
+  });
+}
+
 export async function getSuppliersPage(params?: {
   search?: string;
   page?: number;
@@ -428,12 +439,42 @@ export async function deleteDepartment(id: number) {
   return apiDelete<null>(`/Departments/${id}`);
 }
 
-export async function createTag(payload: { name: string; color: string }) {
-  return apiPost<null>("/Tags", payload);
+export async function createTag(payload: {
+  name: string;
+  color: string;
+  isPublic?: boolean;
+}) {
+  const response = await apiPost<TagDto>("/Tags", {
+    name: payload.name.trim(),
+    color: payload.color,
+    isPublic: payload.isPublic ?? false,
+  });
+
+  if (!response.data) {
+    throw new Error("Nao foi possivel identificar a etiqueta criada.");
+  }
+
+  return response.data;
 }
 
-export async function updateTag(payload: { id: number; name: string; color: string }) {
-  return apiPut<TagDto>("/Tags", payload);
+export async function updateTag(payload: {
+  id: number;
+  name: string;
+  color: string;
+  isPublic: boolean;
+}) {
+  const response = await apiPut<TagDto>("/Tags", {
+    id: payload.id,
+    name: payload.name.trim(),
+    color: payload.color,
+    isPublic: payload.isPublic,
+  });
+
+  if (!response.data) {
+    throw new Error("Nao foi possivel identificar a etiqueta atualizada.");
+  }
+
+  return response.data;
 }
 
 export async function deleteTag(id: number) {
@@ -516,21 +557,34 @@ export async function createOrReuseProductGroup(payload: {
       item.name.trim().toLowerCase() === payload.name.trim().toLowerCase(),
   );
 
-  if (existing) return existing.id;
+  if (existing) return existing;
 
-  const response = await apiPost<null>("/ProductGroups", {
+  const response = await apiPost<ProductGroupDto>("/ProductGroups", {
     categoryId: payload.categoryId,
     name: payload.name.trim(),
     description: payload.description?.trim() || null,
     hasVariations: payload.hasVariations ?? false,
   });
 
-  const createdId = extractCreatedId(response.response);
-  if (!createdId) {
-    throw new Error("Não foi possível identificar o grupo de produto criado.");
+  if (response.data) {
+    return response.data;
   }
 
-  return createdId;
+  const createdId = extractCreatedId(response.response);
+  if (!createdId) {
+    throw new Error("Nao foi possivel identificar o grupo de produto criado.");
+  }
+
+  return {
+    id: createdId,
+    createdAt: new Date().toISOString(),
+    updatedAt: null,
+    categoryId: payload.categoryId,
+    name: payload.name.trim(),
+    description: payload.description?.trim() || null,
+    hasVariations: payload.hasVariations ?? false,
+    canDelete: true,
+  } satisfies ProductGroupDto;
 }
 
 export async function createProductGroup(payload: {
@@ -539,19 +593,32 @@ export async function createProductGroup(payload: {
   description?: string | null;
   hasVariations: boolean;
 }) {
-  const response = await apiPost<null>("/ProductGroups", {
+  const response = await apiPost<ProductGroupDto>("/ProductGroups", {
     categoryId: payload.categoryId,
     name: payload.name.trim(),
     description: payload.description?.trim() || null,
     hasVariations: payload.hasVariations,
   });
 
-  const createdId = extractCreatedId(response.response);
-  if (!createdId) {
-    throw new Error("Não foi possível identificar o grupo de produto criado.");
+  if (response.data) {
+    return response.data;
   }
 
-  return createdId;
+  const createdId = extractCreatedId(response.response);
+  if (!createdId) {
+    throw new Error("Nao foi possivel identificar o grupo de produto criado.");
+  }
+
+  return {
+    id: createdId,
+    createdAt: new Date().toISOString(),
+    updatedAt: null,
+    categoryId: payload.categoryId,
+    name: payload.name.trim(),
+    description: payload.description?.trim() || null,
+    hasVariations: payload.hasVariations,
+    canDelete: true,
+  } satisfies ProductGroupDto;
 }
 
 export async function updateProductGroup(payload: {
@@ -561,7 +628,7 @@ export async function updateProductGroup(payload: {
   description?: string | null;
   hasVariations: boolean;
 }) {
-  await apiPut<ProductGroupDto>("/ProductGroups", {
+  const response = await apiPut<ProductGroupDto>("/ProductGroups", {
     id: payload.id,
     categoryId: payload.categoryId,
     name: payload.name.trim(),
@@ -569,7 +636,11 @@ export async function updateProductGroup(payload: {
     hasVariations: payload.hasVariations,
   });
 
-  return payload.id;
+  if (!response.data) {
+    throw new Error("Nao foi possivel identificar o grupo de produto atualizado.");
+  }
+
+  return response.data;
 }
 
 export async function upsertProduct(payload: {
@@ -591,20 +662,41 @@ export async function upsertProduct(payload: {
   };
 
   if (payload.id) {
-    await apiPut<ProductDto>("/Products", {
+    const response = await apiPut<ProductDto>("/Products", {
       id: payload.id,
       ...request,
     });
-    return payload.id;
+
+    if (!response.data) {
+      throw new Error("Nao foi possivel identificar o produto atualizado.");
+    }
+
+    return response.data;
   }
 
-  const response = await apiPost<null>("/Products", request);
+  const response = await apiPost<ProductDto>("/Products", request);
+  if (response.data) {
+    return response.data;
+  }
+
   const createdId = extractCreatedId(response.response);
   if (!createdId) {
-    throw new Error("Não foi possível identificar o produto criado.");
+    throw new Error("Nao foi possivel identificar o produto criado.");
   }
 
-  return createdId;
+  return {
+    id: createdId,
+    createdAt: new Date().toISOString(),
+    updatedAt: null,
+    productGroupId: payload.productGroupId,
+    name: payload.name.trim(),
+    description: payload.description?.trim() || null,
+    price: payload.price,
+    costPrice: 0,
+    stock: 0,
+    status: payload.status,
+    canDelete: true,
+  } satisfies ProductDto;
 }
 
 export async function deleteProduct(id: number) {

@@ -4,10 +4,12 @@ import { AppLayout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowDown, ArrowUp, ArrowUpDown, BarChart3, Edit2, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, BarChart3, Edit2, Loader2, Plus, RefreshCcw, Search, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/formatters";
+import { generateRandomTagColor } from "@/lib/tag-colors";
 import { createTag, deleteTag, getTagsPage, updateTag } from "@/lib/backend";
 import { buildMockTagReport } from "@/lib/mock-data";
 
@@ -36,7 +38,7 @@ export default function Tags() {
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [formData, setFormData] = useState({ name: "", color: "#6366f1" });
+  const [formData, setFormData] = useState({ name: "", color: generateRandomTagColor(), isPublic: false });
   const [saving, setSaving] = useState(false);
 
   const { data: tagPage, isLoading } = useQuery({
@@ -87,12 +89,16 @@ export default function Tags() {
   function openModal(tag?: any) {
     if (tag) {
       setEditingId(tag.id);
-      setFormData({ name: tag.name, color: tag.color });
+      setFormData({ name: tag.name, color: tag.color, isPublic: tag.isPublic ?? false });
     } else {
       setEditingId(null);
-      setFormData({ name: "", color: "#6366f1" });
+      setFormData({ name: "", color: generateRandomTagColor(), isPublic: false });
     }
     setModalOpen(true);
+  }
+
+  function randomizeColor() {
+    setFormData((current) => ({ ...current, color: generateRandomTagColor() }));
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -102,10 +108,19 @@ export default function Tags() {
     setSaving(true);
     try {
       if (editingId) {
-        await updateTag({ id: editingId, name: formData.name.trim(), color: formData.color });
+        await updateTag({
+          id: editingId,
+          name: formData.name.trim(),
+          color: formData.color,
+          isPublic: formData.isPublic,
+        });
         toast({ title: "Etiqueta atualizada." });
       } else {
-        await createTag({ name: formData.name.trim(), color: formData.color });
+        await createTag({
+          name: formData.name.trim(),
+          color: formData.color,
+          isPublic: formData.isPublic,
+        });
         toast({ title: "Etiqueta criada." });
       }
 
@@ -178,19 +193,20 @@ export default function Tags() {
                   <th className="cursor-pointer px-6 py-4 hover:text-foreground" onClick={() => toggleSort("createdAt")}>
                     Data Cadastro <SortIcon active={sortBy === "createdAt"} direction={sortDir} />
                   </th>
+                  <th className="px-6 py-4">Exibir no site</th>
                   <th className="px-6 py-4 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td colSpan={4} className="py-12 text-center">
+                    <td colSpan={5} className="py-12 text-center">
                       <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
                     </td>
                   </tr>
                 ) : tagsWithCount.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-12 text-center text-muted-foreground">
+                    <td colSpan={5} className="py-12 text-center text-muted-foreground">
                       Nenhuma etiqueta encontrada.
                     </td>
                   </tr>
@@ -212,6 +228,17 @@ export default function Tags() {
                       </td>
                       <td className="px-6 py-4 text-muted-foreground">
                         {new Date(tag.createdAt).toLocaleDateString("pt-BR")}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                            tag.isPublic
+                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {tag.isPublic ? "Ligado" : "Desligado"}
+                        </span>
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -323,6 +350,26 @@ export default function Tags() {
                   className="h-12 w-16 cursor-pointer bg-background p-1"
                 />
                 <span className="font-mono text-sm text-muted-foreground">{formData.color}</span>
+                <Button type="button" variant="outline" onClick={randomizeColor} className="ml-auto">
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Gerar aleatoria
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-background/50 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Exibir no site</label>
+                  <p className="text-sm text-muted-foreground">
+                    Use esta opcao para tornar a etiqueta publica no catalogo.
+                  </p>
+                </div>
+                <Switch
+                  checked={formData.isPublic}
+                  onCheckedChange={(checked) =>
+                    setFormData((current) => ({ ...current, isPublic: checked }))
+                  }
+                />
               </div>
             </div>
             <DialogFooter className="pt-4">

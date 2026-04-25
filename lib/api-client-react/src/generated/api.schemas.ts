@@ -101,6 +101,7 @@ export interface Tag {
   id: number;
   name: string;
   color: string;
+  isPublic: boolean;
   productCount: number;
   createdAt: string;
 }
@@ -108,6 +109,7 @@ export interface Tag {
 export interface CreateTagRequest {
   name: string;
   color: string;
+  isPublic?: boolean;
 }
 
 export interface TagProductStats {
