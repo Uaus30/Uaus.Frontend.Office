@@ -70,7 +70,7 @@ type SupplierForm = {
   salesRepresentative: string;
   phone: string;
   email: string;
-  minimumPurchaseValue: number;
+  minimumPurchaseValue: string;
   status: string;
   city: string;
   state: string;
@@ -96,7 +96,7 @@ export default function Suppliers() {
     salesRepresentative: "",
     phone: "",
     email: "",
-    minimumPurchaseValue: 0,
+    minimumPurchaseValue: "",
     status: "",
     city: "",
     state: "",
@@ -133,17 +133,17 @@ export default function Suppliers() {
     if (supplier) {
       setEditingId(supplier.id);
       setForm({
-        name: supplier.name,
+        name: supplier.name || "",
         corporateName: supplier.corporateName || "",
         document: supplier.document || "",
-        salesRepresentative: supplier.salesRepresentative,
-        phone: supplier.phone,
+        salesRepresentative: supplier.salesRepresentative || "",
+        phone: supplier.phone || "",
         email: supplier.email || "",
-        minimumPurchaseValue: supplier.minimumPurchaseValue,
-        status: String(supplier.status),
-        city: supplier.city,
-        state: supplier.state,
-        avatarColor: supplier.avatarColor,
+        minimumPurchaseValue: String(supplier.minimumPurchaseValue ?? ""),
+        status: supplier.status == null ? "" : String(supplier.status),
+        city: supplier.city || "",
+        state: supplier.state || "",
+        avatarColor: supplier.avatarColor || randomColor(),
       });
     } else {
       setEditingId(null);
@@ -154,8 +154,8 @@ export default function Suppliers() {
         salesRepresentative: "",
         phone: "",
         email: "",
-        minimumPurchaseValue: 0,
-        status: statusOptions.find((item) => item.allowSelect)?.id.toString() ?? "",
+        minimumPurchaseValue: "",
+        status: "",
         city: "",
         state: "",
         avatarColor: randomColor(),
@@ -167,6 +167,17 @@ export default function Suppliers() {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+
+    const minimumPurchaseValue = Number(form.minimumPurchaseValue);
+    if (!form.name.trim() || form.minimumPurchaseValue === "" || Number.isNaN(minimumPurchaseValue) || minimumPurchaseValue < 0) {
+      toast({
+        title: "Preencha os campos obrigatórios",
+        description: "Informe o nome do fornecedor e o valor mínimo de compra.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -177,8 +188,8 @@ export default function Suppliers() {
         salesRepresentative: form.salesRepresentative.trim(),
         phone: form.phone.trim(),
         email: form.email.trim() || null,
-        minimumPurchaseValue: form.minimumPurchaseValue,
-        status: Number(form.status),
+        minimumPurchaseValue,
+        status: form.status ? Number(form.status) : 0,
         city: form.city.trim(),
         state: form.state,
         avatarColor: form.avatarColor,
@@ -308,29 +319,33 @@ export default function Suppliers() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-muted-foreground">{supplier.salesRepresentative}</td>
+                      <td className="px-6 py-4 text-muted-foreground">{supplier.salesRepresentative || "Não informado"}</td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm">{supplier.phone}</span>
-                            <a
-                              href={whatsappUrl(supplier.phone)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[#25d366] transition-colors hover:text-[#128c7e]"
-                              title="Abrir conversa no WhatsApp"
-                            >
-                              <WhatsAppIcon className="h-4 w-4" />
-                            </a>
-                          </div>
+                          {supplier.phone ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">{supplier.phone}</span>
+                              <a
+                                href={whatsappUrl(supplier.phone)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[#25d366] transition-colors hover:text-[#128c7e]"
+                                title="Abrir conversa no WhatsApp"
+                              >
+                                <WhatsAppIcon className="h-4 w-4" />
+                              </a>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Não informado</span>
+                          )}
                           {supplier.email && <span className="max-w-[180px] truncate text-xs text-muted-foreground">{supplier.email}</span>}
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-muted-foreground">{supplier.city}/{supplier.state}</td>
+                      <td className="px-6 py-4 text-muted-foreground">{supplier.city || supplier.state ? [supplier.city, supplier.state].filter(Boolean).join("/") : "Não informado"}</td>
                       <td className="px-6 py-4 font-medium text-primary">{formatCurrency(supplier.minimumPurchaseValue)}</td>
                       <td className="px-6 py-4">
                         <Badge className="border-0 bg-emerald-500/20 text-emerald-400">
-                          {statusLabelById[supplier.status] ?? supplier.status}
+                          {statusLabelById[supplier.status] ?? (supplier.status ? supplier.status : "Sem status")}
                         </Badge>
                       </td>
                       <td className="px-6 py-4 text-xs text-muted-foreground">
@@ -410,101 +425,194 @@ export default function Suppliers() {
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-5 py-2">
-            <div className="flex items-center gap-4 rounded-xl border border-border/30 bg-background/50 p-4">
-              <SupplierAvatar name={form.name || "?"} color={form.avatarColor} size="lg" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-foreground">{form.name || "Nome do fornecedor"}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Ícone gerado pelas iniciais do nome</p>
+            <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
+              <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)_minmax(0,220px)] sm:items-end">
+                <div className="flex items-center gap-2 sm:self-center">
+                  <SupplierAvatar name={form.name || "?"} color={form.avatarColor} size="lg" />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    className="h-8 w-8 flex-shrink-0 bg-background"
+                    title="Sortear cor do ícone"
+                    aria-label="Sortear cor do ícone"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        avatarColor: randomColor(),
+                      }))
+                    }
+                  >
+                    <Shuffle className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="supplier-name">Nome do fornecedor</Label>
+                  <Input
+                    id="supplier-name"
+                    value={form.name}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        name: event.target.value,
+                      }))
+                    }
+                    className="bg-background"
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="supplier-minimum-purchase">Valor mínimo de compra (R$)</Label>
+                  <Input
+                    id="supplier-minimum-purchase"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={form.minimumPurchaseValue}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        minimumPurchaseValue: event.target.value,
+                      }))
+                    }
+                    className="bg-background"
+                    required
+                  />
+                </div>
               </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 flex-shrink-0 gap-1.5 text-xs"
-                onClick={() => setForm((current) => ({ ...current, avatarColor: randomColor() }))}
-              >
-                <Shuffle className="h-3.5 w-3.5" />
-                Sortear cor
-              </Button>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>Nome</Label>
-                <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="bg-background" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Razão Social</Label>
-                <Input value={form.corporateName} onChange={(event) => setForm((current) => ({ ...current, corporateName: event.target.value }))} className="bg-background" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>CPF / CNPJ</Label>
-                <Input value={form.document} onChange={(event) => setForm((current) => ({ ...current, document: event.target.value }))} className="bg-background font-mono" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Vendedor</Label>
-                <Input value={form.salesRepresentative} onChange={(event) => setForm((current) => ({ ...current, salesRepresentative: event.target.value }))} className="bg-background" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5">
-                  <Phone className="h-3.5 w-3.5" /> Telefone
-                </Label>
-                <Input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className="bg-background" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Email</Label>
-                <Input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="bg-background" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Valor Mínimo de Compra (R$)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.minimumPurchaseValue}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, minimumPurchaseValue: Number(event.target.value) }))
-                  }
-                  className="bg-background"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Status</Label>
-                <Select value={form.status} onValueChange={(value) => setForm((current) => ({ ...current, status: value }))}>
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statusOptions
-                      .filter((item) => item.allowSelect)
-                      .map((item) => (
-                        <SelectItem key={item.id} value={String(item.id)}>
-                          {item.name}
+            <fieldset className="space-y-4 rounded-xl border border-border/40 p-4">
+              <legend className="px-1 text-sm font-semibold text-foreground">Informações opcionais:</legend>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Razão Social</Label>
+                  <Input
+                    value={form.corporateName}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        corporateName: event.target.value,
+                      }))
+                    }
+                    className="bg-background"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>CPF / CNPJ</Label>
+                  <Input
+                    value={form.document}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        document: event.target.value,
+                      }))
+                    }
+                    className="bg-background font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Vendedor</Label>
+                  <Input
+                    value={form.salesRepresentative}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        salesRepresentative: event.target.value,
+                      }))
+                    }
+                    className="bg-background"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="flex items-center gap-1.5">
+                    <Phone className="h-3.5 w-3.5" /> Telefone
+                  </Label>
+                  <Input
+                    value={form.phone}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        phone: event.target.value,
+                      }))
+                    }
+                    className="bg-background"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    value={form.email}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        email: event.target.value,
+                      }))
+                    }
+                    className="bg-background"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Status</Label>
+                  <Select
+                    value={form.status || "__none"}
+                    onValueChange={(value) =>
+                      setForm((current) => ({ ...current, status: value === "__none" ? "" : value }))
+                    }
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Não informar</SelectItem>
+                      {statusOptions
+                        .filter((item) => item.allowSelect)
+                        .map((item) => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Cidade</Label>
+                  <Input
+                    value={form.city}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        city: event.target.value,
+                      }))
+                    }
+                    className="bg-background"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>UF</Label>
+                  <Select
+                    value={form.state || "__none"}
+                    onValueChange={(value) =>
+                      setForm((current) => ({ ...current, state: value === "__none" ? "" : value }))
+                    }
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Não informar</SelectItem>
+                      {UF_LIST.map((uf) => (
+                        <SelectItem key={uf} value={uf}>
+                          {uf}
                         </SelectItem>
                       ))}
-                  </SelectContent>
-                </Select>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label>Cidade</Label>
-                <Input value={form.city} onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))} className="bg-background" />
-              </div>
-              <div className="space-y-1.5">
-                <Label>UF</Label>
-                <Select value={form.state} onValueChange={(value) => setForm((current) => ({ ...current, state: value }))}>
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="Selecione..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {UF_LIST.map((uf) => (
-                      <SelectItem key={uf} value={uf}>
-                        {uf}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            </fieldset>
 
             <DialogFooter className="pt-4">
               <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
