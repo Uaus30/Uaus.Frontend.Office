@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,10 @@ function getInitials(name: string) {
 
 function randomColor() {
   return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
+}
+
+function normalizeStatusName(name: string) {
+  return name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 }
 
 function SupplierAvatar({ name, color, size = "md" }: { name: string; color: string; size?: "sm" | "md" | "lg" }) {
@@ -112,6 +116,27 @@ export default function Suppliers() {
     () => Object.fromEntries(statusOptions.map((item) => [item.id, item.name])),
     [statusOptions],
   );
+  const selectableSupplierStatusOptions = useMemo(
+    () =>
+      statusOptions.filter(
+        (item) =>
+          item.allowSelect &&
+          ["ativo", "inativo"].includes(normalizeStatusName(item.name)),
+      ),
+    [statusOptions],
+  );
+  const activeStatusValue =
+    selectableSupplierStatusOptions.find((item) => normalizeStatusName(item.name) === "ativo")?.id.toString() ?? "";
+
+  useEffect(() => {
+    if (!modalOpen || !activeStatusValue || selectableSupplierStatusOptions.length === 0) return;
+
+    setForm((current) => {
+      const statusIsAllowed = selectableSupplierStatusOptions.some((item) => String(item.id) === current.status);
+      if (statusIsAllowed) return current;
+      return { ...current, status: activeStatusValue };
+    });
+  }, [activeStatusValue, modalOpen, selectableSupplierStatusOptions]);
 
   const { data: suppliersPage, isLoading } = useQuery({
     queryKey: ["suppliers-page", { search, page, limit }],
@@ -132,6 +157,9 @@ export default function Suppliers() {
   function openModal(supplier?: any) {
     if (supplier) {
       setEditingId(supplier.id);
+      const supplierStatus = supplier.status == null ? "" : String(supplier.status);
+      const statusIsAllowed = selectableSupplierStatusOptions.some((item) => String(item.id) === supplierStatus);
+
       setForm({
         name: supplier.name || "",
         corporateName: supplier.corporateName || "",
@@ -140,7 +168,7 @@ export default function Suppliers() {
         phone: supplier.phone || "",
         email: supplier.email || "",
         minimumPurchaseValue: String(supplier.minimumPurchaseValue ?? ""),
-        status: supplier.status == null ? "" : String(supplier.status),
+        status: statusIsAllowed ? supplierStatus : activeStatusValue,
         city: supplier.city || "",
         state: supplier.state || "",
         avatarColor: supplier.avatarColor || randomColor(),
@@ -155,7 +183,7 @@ export default function Suppliers() {
         phone: "",
         email: "",
         minimumPurchaseValue: "",
-        status: "",
+        status: activeStatusValue,
         city: "",
         state: "",
         avatarColor: randomColor(),
@@ -178,6 +206,16 @@ export default function Suppliers() {
       return;
     }
 
+    const statusValue = form.status || activeStatusValue;
+    if (!statusValue) {
+      toast({
+        title: "Status indisponível",
+        description: "Aguarde as opções de status carregarem para salvar.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -189,7 +227,7 @@ export default function Suppliers() {
         phone: form.phone.trim(),
         email: form.email.trim() || null,
         minimumPurchaseValue,
-        status: form.status ? Number(form.status) : 0,
+        status: Number(statusValue),
         city: form.city.trim(),
         state: form.state,
         avatarColor: form.avatarColor,
@@ -557,23 +595,19 @@ export default function Suppliers() {
                 <div className="space-y-1.5">
                   <Label>Status</Label>
                   <Select
-                    value={form.status || "__none"}
-                    onValueChange={(value) =>
-                      setForm((current) => ({ ...current, status: value === "__none" ? "" : value }))
-                    }
+                    value={form.status}
+                    onValueChange={(value) => setForm((current) => ({ ...current, status: value }))}
+                    disabled={selectableSupplierStatusOptions.length === 0}
                   >
                     <SelectTrigger className="bg-background">
                       <SelectValue placeholder="Selecione..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none">Não informar</SelectItem>
-                      {statusOptions
-                        .filter((item) => item.allowSelect)
-                        .map((item) => (
-                          <SelectItem key={item.id} value={String(item.id)}>
-                            {item.name}
-                          </SelectItem>
-                        ))}
+                      {selectableSupplierStatusOptions.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
