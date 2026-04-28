@@ -5,7 +5,7 @@ import type {
   DashboardMetrics,
   TagReport,
   TopProduct,
-} from "@/lib/backend";
+} from "@/services/mappers";
 
 export const dashboardMockMetrics: DashboardMetrics = {
   totalRevenue: 12840.5,

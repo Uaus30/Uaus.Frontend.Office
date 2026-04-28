@@ -14,7 +14,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { generateRandomTagColor } from "@/lib/tag-colors";
-import { createTag, searchTags } from "@/lib/backend";
+import { createTag, searchTags } from "@/services/tags.service";
 import { Check, ChevronsUpDown, Plus, X } from "lucide-react";
 
 type TagMultiSelectProps = {

@@ -14,7 +14,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Edit2, Loader2, Plus, Search, Trash2, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatShortDate } from "@/lib/formatters";
-import { buildCustomerStats, getAllSales } from "@/lib/backend";
+import { buildCustomerStats } from "@/services/mappers";
+import { getAllSales } from "@/services/sales.service";
 
 export default function Customers() {
   const queryClient = useQueryClient();

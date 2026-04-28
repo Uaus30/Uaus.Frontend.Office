@@ -9,14 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Check, Copy, ExternalLink, ImageIcon, Loader2, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { buildPublicImageUrl, getEnumOptions } from "@/services/core";
 import {
-  buildPublicImageUrl,
   createImageFromFile,
   deleteImage,
-  getEnumOptions,
   getImagesPage,
   updateImageRecord,
-} from "@/lib/backend";
+} from "@/services/images.service";
 
 export default function Images() {
   const queryClient = useQueryClient();

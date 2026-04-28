@@ -17,7 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2, Pencil, Plus, ShieldCheck, Trash2, User, UserCog } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getDisplayName, getEnumOptions, splitFullName, usernameFromEmail } from "@/lib/backend";
+import { getEnumOptions } from "@/services/core";
+import { getDisplayName, splitFullName, usernameFromEmail } from "@/services/mappers";
 
 type UserForm = {
   fullName: string;

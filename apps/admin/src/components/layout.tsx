@@ -30,7 +30,7 @@ import {
 import { useGetMe, useLogout } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getGetMeQueryKey } from "@workspace/api-client-react";
-import { getDisplayName } from "@/lib/backend";
+import { getDisplayName } from "@/services/mappers";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },

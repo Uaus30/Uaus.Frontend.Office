@@ -10,23 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { Eye, Loader2, Plus, Receipt, Trash2, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import {
-  buildEnrichedSales,
-  buildProductCollections,
-  createSaleWithItems,
-  deleteSaleWithItems,
-  getAllCategories,
-  getAllCustomers,
-  getAllDepartments,
-  getAllImages,
-  getAllProductGroups,
-  getAllProductImages,
-  getAllProducts,
-  getAllProductTags,
-  getAllSaleItems,
-  getAllTags,
-  getEnumOptions,
-} from "@/lib/backend";
+import { getEnumOptions } from "@/services/core";
+import { buildEnrichedSales, buildProductCollections } from "@/services/mappers";
+import { getAllProducts, getAllProductGroups, getAllProductTags, getAllProductImages } from "@/services/products.service";
+import { getAllCategories, getAllDepartments } from "@/services/categories.service";
+import { getAllTags } from "@/services/tags.service";
+import { getAllImages } from "@/services/images.service";
+import { getAllCustomers } from "@/services/customers.service";
+import { getAllSaleItems, createSaleWithItems, deleteSaleWithItems } from "@/services/sales.service";
 
 export default function Sales() {
   const queryClient = useQueryClient();

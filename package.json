@@ -3,13 +3,13 @@
   "version": "0.0.0",
   "license": "MIT",
   "workspaces": [
-    "artifacts/gestao",
-    "lib/api-client-react"
+    "apps/admin",
+    "packages/api-client"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@workspace/gestao",
-    "build": "npm run build --workspace=@workspace/gestao",
-    "typecheck": "npm run typecheck --workspace=@workspace/gestao"
+    "dev": "npm run dev --workspace=@workspace/admin",
+    "build": "npm run build --workspace=@workspace/admin",
+    "typecheck": "npm run typecheck --workspace=@workspace/admin"
   },
   "private": true,
   "devDependencies": {

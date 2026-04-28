@@ -12,7 +12,7 @@ import {
   getAllCategories,
   getDepartmentsPage,
   updateDepartment,
-} from "@/lib/backend";
+} from "@/services/categories.service";
 
 export default function Departments() {
   const queryClient = useQueryClient();

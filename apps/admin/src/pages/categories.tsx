@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { BarChart3, Edit2, Folder, Loader2, Plus, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/formatters";
-import { createCategory, deleteCategory, getAllDepartments, getCategoriesPage, updateCategory } from "@/lib/backend";
+import { createCategory, deleteCategory, getAllDepartments, getCategoriesPage, updateCategory } from "@/services/categories.service";
 import { buildMockCategoryReport } from "@/lib/mock-data";
 import { getGetCategoriesQueryKey } from "@workspace/api-client-react";
 

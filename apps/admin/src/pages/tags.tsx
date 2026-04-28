@@ -10,7 +10,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, BarChart3, Edit2, Loader2, Plus, Refre
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/formatters";
 import { generateRandomTagColor } from "@/lib/tag-colors";
-import { createTag, deleteTag, getTagsPage, updateTag } from "@/lib/backend";
+import { createTag, deleteTag, getTagsPage, updateTag } from "@/services/tags.service";
 import { buildMockTagReport } from "@/lib/mock-data";
 
 type SortDir = "asc" | "desc";

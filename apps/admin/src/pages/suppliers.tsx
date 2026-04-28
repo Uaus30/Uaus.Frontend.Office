@@ -10,13 +10,13 @@ import { Badge } from "@/components/ui/badge";
 import { Edit2, Loader2, Phone, Plus, Search, Shuffle, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/formatters";
+import { getEnumOptions } from "@/services/core";
 import {
   createSupplier,
   deleteSupplier,
-  getEnumOptions,
   getSuppliersPage,
   updateSupplier,
-} from "@/lib/backend";
+} from "@/services/suppliers.service";
 
 const AVATAR_COLORS = [
   "#6366f1", "#8b5cf6", "#a855f7", "#ec4899", "#f43f5e",
